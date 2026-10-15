@@ -1,0 +1,76 @@
+# Publica um Release no GitHub quando uma tag vX.Y.Z é enviada.
+# Builda os binários nativos de cada plataforma, empacota (.tar.gz / .zip),
+# gera o SHA256SUMS e anexa tudo ao release.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # necessário para criar o Release
+
+jobs:
+  build:
+    name: build ${{ matrix.nome }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 em vez de latest: binário com glibc mais antiga roda em mais distros
+          - { os: ubuntu-22.04,   alvo: x86_64-unknown-linux-gnu, nome: linux-amd64 }
+          - { os: macos-latest,   alvo: aarch64-apple-darwin,     nome: mac-arm64 }
+          - { os: macos-latest,   alvo: x86_64-apple-darwin,      nome: mac-intel }
+          - { os: windows-latest, alvo: x86_64-pc-windows-msvc,   nome: windows-amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.alvo }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.alvo }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.alvo }}
+
+      - name: Empacotar (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.alvo }}/release/nasus dist/nasus
+          tar czf dist/nasus-${{ matrix.nome }}.tar.gz -C dist nasus
+
+      - name: Empacotar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/${{ matrix.alvo }}/release/nasus.exe dist/nasus.exe
+          Compress-Archive -Path dist/nasus.exe -DestinationPath dist/nasus-${{ matrix.nome }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nasus-${{ matrix.nome }}
+          path: dist/nasus-${{ matrix.nome }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        run: cd dist && sha256sum nasus-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publicar o Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

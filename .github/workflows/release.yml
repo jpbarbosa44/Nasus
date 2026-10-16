@@ -1,6 +1,7 @@
 # Publica um Release no GitHub quando uma tag vX.Y.Z é enviada.
 # Builda os binários nativos de cada plataforma, empacota (.tar.gz / .zip),
-# gera o SHA256SUMS e anexa tudo ao release.
+# gera o SHA256SUMS e anexa tudo ao release. Os binários também vão soltos
+# (nasus-linux-amd64, nasus-windows-amd64.exe...): é o que o `nasus atualizar` baixa.
 name: release
 
 on:
@@ -43,6 +44,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.alvo }}/release/nasus dist/nasus
           tar czf dist/nasus-${{ matrix.nome }}.tar.gz -C dist nasus
+          mv dist/nasus dist/nasus-${{ matrix.nome }}
 
       - name: Empacotar (Windows)
         if: runner.os == 'Windows'
@@ -51,11 +53,12 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/${{ matrix.alvo }}/release/nasus.exe dist/nasus.exe
           Compress-Archive -Path dist/nasus.exe -DestinationPath dist/nasus-${{ matrix.nome }}.zip
+          Move-Item dist/nasus.exe dist/nasus-${{ matrix.nome }}.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: nasus-${{ matrix.nome }}
-          path: dist/nasus-${{ matrix.nome }}.*
+          path: dist/nasus-${{ matrix.nome }}*
 
   release:
     needs: build

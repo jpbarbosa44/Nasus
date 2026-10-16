@@ -19,7 +19,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     .areas(area);
     f.render_widget(Paragraph::new(cab), topo);
 
-    let linhas: Vec<Line> = MENU
+    let mut linhas: Vec<Line> = MENU
         .iter()
         .enumerate()
         .map(|(i, (titulo, resumo))| {
@@ -32,6 +32,10 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             Line::from(vec![Span::styled(rotulo, estilo), Span::raw(" "), Span::styled(resumo, cores::APAGADA)])
         })
         .collect();
+    if let Some(v) = &app.atualizacao {
+        linhas.push(Line::default());
+        linhas.push(Line::styled(format!(" ✦ nova versão {v}: rode nasus atualizar"), cores::AMAR));
+    }
     f.render_widget(Paragraph::new(linhas), lista);
     rodape(f, app, baixo, "↑↓ navegar · Enter abrir · 1-7 atalho · ? ajuda · q sair");
 }

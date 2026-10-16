@@ -227,6 +227,8 @@ type RespostaBusca = Result<Vec<Resultado>, String>;
 pub struct App {
     db: Db,
     pub caminho_db: String,
+    /// versão mais nova disponível no GitHub, se houver
+    pub atualizacao: Option<String>,
     pub tela: Tela,
     /// para onde Esc volta a partir da ajuda e da busca
     anterior: Tela,
@@ -280,6 +282,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let mut app = App {
             db,
+            atualizacao: crate::atualizar::nova_versao(std::path::Path::new(&caminho_db)),
             caminho_db,
             tela: Tela::Menu,
             anterior: Tela::Menu,

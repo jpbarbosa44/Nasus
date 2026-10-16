@@ -1,6 +1,7 @@
 //! Nasus: curador das suas leituras, no terminal.
 
 mod app;
+mod atualizar;
 mod bot;
 mod codigo_barras;
 mod dados;
@@ -27,9 +28,12 @@ const USO: &str = "uso: nasus              abre o app no terminal
      nasus exportar     grava a biblioteca em JSON ou CSV
      nasus importar     traz livros de um JSON do Nasus ou do Goodreads
      nasus restaurar    volta o banco para uma cópia de segurança
-     nasus mcp          servidor MCP para o Claude consultar a biblioteca";
+     nasus mcp          servidor MCP para o Claude consultar a biblioteca
+     nasus atualizar    instala a última versão
+     nasus versao       mostra a versão";
 
 fn main() -> Result<()> {
+    atualizar::limpar_antigo();
     let caminho = Db::caminho_padrao()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -40,6 +44,11 @@ fn main() -> Result<()> {
         Some("importar" | "import") => return dados::importar(&caminho, &args[1..]),
         Some("restaurar" | "restore") => return dados::restaurar(&caminho, &args[1..]),
         Some("mcp") => return mcp::rodar(&caminho, &args[1..]),
+        Some("atualizar" | "update") => return atualizar::atualizar(&caminho, &args[1..]),
+        Some("versao" | "versão" | "--version" | "-V") => {
+            atualizar::mostrar_versao();
+            return Ok(());
+        }
         Some("-h" | "--help" | "ajuda") => {
             println!("{USO}\n\n{}\n\n{}\n\n{}\n\n{}", web::USO, bot::USO, dados::USO, mcp::USO);
             return Ok(());
@@ -48,6 +57,9 @@ fn main() -> Result<()> {
     }
 
     let db = Db::abrir(&caminho).with_context(|| format!("abrindo {}", caminho.display()))?;
+    // a consulta ao GitHub não segura a abertura: o aviso vale da próxima vez
+    let para_verificar = caminho.clone();
+    std::thread::spawn(move || atualizar::verificar(&para_verificar));
     let mut app = App::new(db, caminho.display().to_string())?;
 
     // ratatui::init também instala um hook que restaura o terminal num panic

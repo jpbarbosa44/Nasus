@@ -40,6 +40,9 @@ struct Config {
     ultimo_lembrete: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     ultimo_resumo: String,
+    /// última versão nova já avisada, para não repetir
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    versao_avisada: String,
     /// ano da última retrospectiva enviada (em 31/12)
     #[serde(default, skip_serializing_if = "is_zero")]
     ultima_retrospectiva: i32,
@@ -252,6 +255,16 @@ fn verificar_agenda(tg: &Telegram, cfg: &mut Config, caminho_cfg: &Path, nucleo:
     // o bot fica dias com o banco aberto: a cópia do dia sai daqui
     if let Err(e) = nucleo.backup_diario(hoje) {
         eprintln!("aviso: backup diário: {e:#}");
+    }
+    // o cache de versão fica na mesma pasta do telegram.json (a do banco)
+    crate::atualizar::verificar(caminho_cfg);
+    if let Some(v) = crate::atualizar::nova_versao(caminho_cfg)
+        && cfg.versao_avisada != v
+    {
+        let texto = format!("✦ Saiu o Nasus {v}. No computador: nasus atualizar e depois systemctl --user restart nasus-bot");
+        enviar(tg, cfg.chat_id, &Resposta { texto, botoes: Vec::new(), foto: None });
+        cfg.versao_avisada = v;
+        mudou = true;
     }
     if agora.hour() >= HORA_MANHA && cfg.ultimo_lembrete != chave {
         match nucleo.lembrete_manha(hoje) {

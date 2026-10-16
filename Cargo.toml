@@ -22,6 +22,7 @@ rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
 rxing = { version = "0.9", default-features = false, features = ["image", "decoders", "oned", "no_character_set_support"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tiny_http = "0.12"
 ureq = { version = "2", features = ["json"] }
 

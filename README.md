@@ -23,9 +23,15 @@
 - **Plano de leitura**: informe o início e quantas páginas por dia (ex.: 800 páginas, 25/dia) e o Nasus calcula a data de fim, mostra a meta do dia e se você está à frente ou atrás.
 - **Busca por ISBN ou título**: ISBNs brasileiros na [BrasilAPI](https://brasilapi.com.br) (base da CBL), complementados pela [Open Library](https://openlibrary.org), que também sugere as categorias. Ou mande a **foto do código de barras** da contracapa.
 - **Notas, citações e avaliação** de 0 a 5 estrelas; notas e citações aceitam a página (`p.115 texto`).
+- **Histórico de leitura**: cada página registrada conta no dia; as estatísticas mostram a sequência de dias lendo e um mapa de calor, e cada livro mostra quando termina no seu ritmo.
 - **Estatísticas**: meta anual de livros, páginas lidas, nota média, livros por mês e categorias mais lidas.
+- **Retrospectiva do ano**: livro mais longo, mais rápido, autor e categoria do ano, melhor mês, cinco estrelas e uma citação.
+- **Séries e coleções** com volume; ao terminar um, o Nasus sugere o próximo.
+- **Empréstimos**: com quem está cada livro e desde quando.
+- **Seus dados**: backup diário automático, exportar em JSON ou CSV e importar do Goodreads.
 - **Interface web** no navegador, com as mesmas telas e atalhos do app.
 - **Bot de Telegram** para usar pelo celular, com lembretes diários do plano.
+- **Servidor MCP** para o Claude consultar a sua biblioteca.
 
 ## Instalação
 
@@ -45,6 +51,8 @@ mv nasus ~/.local/bin/   # ou outra pasta no PATH
 
 No macOS, se o sistema bloquear o binário baixado: `xattr -d com.apple.quarantine nasus`.
 
+Para atualizar depois: `nasus atualizar` baixa a última versão e confere o SHA256 antes de trocar o binário. O app e o bot avisam quando sai uma versão nova.
+
 Ou compile a partir do código (Rust 1.88+):
 
 ```sh
@@ -54,12 +62,28 @@ cargo install --git https://github.com/jpbarbosa44/Nasus
 ## Uso
 
 ```sh
-nasus          # abre o app no terminal
-nasus web      # abre a interface no navegador (nasus web --help)
-nasus bot      # bot do Telegram (nasus bot --help)
+nasus             # abre o app no terminal
+nasus web         # abre a interface no navegador (nasus web --help)
+nasus bot         # bot do Telegram (nasus bot --help)
+nasus mcp         # servidor MCP para o Claude
+nasus atualizar   # instala a última versão
 ```
 
 Dentro do app, tecle `?` para ver todos os atalhos. Os dados ficam num SQLite em `~/.local/share/nasus/nasus.db` (Linux; no macOS/Windows, na pasta de dados do usuário). Use a variável `NASUS_DB` para escolher outro arquivo.
+
+## Seus dados
+
+O Nasus guarda sozinho uma cópia do banco por dia em `backups/`, na mesma pasta (as 7 mais recentes).
+
+```sh
+nasus exportar                       # nasus-AAAA-MM-DD.json: tudo, inclusive notas, planos e histórico
+nasus exportar --saida livros.csv    # CSV com ";" para abrir em planilha
+nasus importar arquivo.json          # traz de volta um JSON exportado
+nasus importar goodreads_library_export.csv
+nasus restaurar                      # lista as cópias e volta para uma delas
+```
+
+Do **Goodreads**: Meus livros › Importar e exportar › Exportar biblioteca. O Nasus traz o status de cada estante, a data de leitura, a nota, a resenha, as estantes como categorias e a série do título ("Duna (Crônicas de Duna, #1)"). Livros que já existem (mesmo ISBN, ou mesmo título e autor) são pulados, e uma cópia do banco é guardada antes de importar. A interface web também exporta (Como usar › Seus dados).
 
 ## Interface web
 
@@ -69,7 +93,7 @@ nasus web --porta 8080       # outra porta (padrão: 6278)
 nasus web --sem-abrir        # só sobe o servidor
 ```
 
-As mesmas telas do app de terminal no navegador: biblioteca com abas e categorias, detalhes com capa, plano e notas, estatísticas e busca online (dá para enviar a foto do código de barras). Os atalhos são os mesmos (`a` adiciona, `e` edita, `p` registra a página, `1`-`7` trocam de tela, `?` ajuda).
+As mesmas telas do app de terminal no navegador: biblioteca com abas e categorias, detalhes com capa, plano e notas, estatísticas com mapa de calor e retrospectiva, e busca online (dá para enviar a foto do código de barras). Os atalhos são os mesmos (`a` adiciona, `e` edita, `p` registra a página, `1`-`7` trocam de tela, `?` ajuda).
 
 O servidor escuta **somente em `127.0.0.1`**: nada fica acessível pela rede, e requisições de outros sites são recusadas. A página vai embutida no binário, sem arquivos extras. O app, a web e o bot podem ficar abertos ao mesmo tempo sobre o mesmo banco. Ctrl+C encerra.
 
@@ -95,8 +119,28 @@ O bot só responde ao chat autorizado. Pelo celular:
 | `/plano 25` | plano de 25 páginas por dia a partir de hoje |
 | `/nota texto`, `/citacao p.115 texto` | anota no livro atual (p.115 marca a página; sem ela, vale a atual) |
 | `/meta 12` | define a meta de livros do ano |
+| `/serie #3 Duna 1` | série e volume (`/serie Duna` lista os volumes) |
+| `/emprestar #3 Maria`, `/devolvido #3` | anota empréstimos (`/emprestados` lista) |
+| `/retrospectiva` | os destaques do ano |
 
-Às 8h ele manda a meta de leitura do dia e às 21h lembra do que ainda falta. Mande `/ajuda` para a lista completa.
+Às 8h ele manda a meta de leitura do dia e às 21h lembra do que ainda falta, inclusive a sequência de dias lendo que está em risco. Em 31/12 chega a retrospectiva do ano. Mande `/ajuda` para a lista completa.
+
+## Claude (MCP)
+
+`nasus mcp` é um servidor [MCP](https://modelcontextprotocol.io): com ele, o Claude consulta a sua biblioteca ("o que eu anotei sobre memória em Proust?", "qual o próximo da fila?", "como foi meu ano de leitura?").
+
+```sh
+claude mcp add nasus -- nasus mcp             # Claude Code, só leitura
+claude mcp add nasus -- nasus mcp --escrita   # também registra páginas, notas, status e empréstimos
+```
+
+No Claude Desktop, em `claude_desktop_config.json` (use o caminho completo do binário se ele não estiver no PATH do app):
+
+```json
+{ "mcpServers": { "nasus": { "command": "nasus", "args": ["mcp"] } } }
+```
+
+Ferramentas de leitura: `livros`, `livro`, `buscar_notas`, `estatisticas`, `retrospectiva`, `historico`, `categorias` e `emprestimos`. Com `--escrita`: `adicionar_livro`, `registrar_pagina`, `mudar_status`, `avaliar`, `adicionar_nota`, `definir_categorias`, `emprestar` e `devolver`, com uma cópia do banco antes da primeira gravação de cada sessão.
 
 ## Licença
 

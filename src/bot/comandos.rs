@@ -19,12 +19,13 @@ Para registrar o progresso, me mande:
 Com mais de um livro em andamento, eu pergunto qual (ou use 120 #3).
 
 Consultar:
-/lendo — livros em andamento e o plano de hoje
+/lendo — livros em andamento, o plano de hoje e a sequência de dias
 /estante — livros que você tem
 /fila — livros que você quer ler (a seguir)
 /livro #3 — detalhes de um livro (ou /livro duna, pelo título)
 /notas #3 — todas as notas e citações do livro
 /meta — meta de livros do ano (/meta 12 define)
+/retrospectiva — os destaques do ano (/retrospectiva 2025)
 
 Organizar:
 /buscar duna — busca na Open Library por título ou ISBN e põe na estante com um toque
@@ -34,17 +35,23 @@ Organizar:
 /paginas #3 320 — corrige o total de páginas
 /remover #3 — remove o livro (/remover nota 12 remove uma nota)
 /categoria #3 romance, filosofia — categorias do livro (/categorias lista todas)
+/serie #3 Duna 1 — série e volume (/serie Duna lista os volumes)
 /avaliar #3 5 — nota de 0 a 5
 /nota texto — anota algo no livro atual (/nota #3 texto)
 /citacao texto — guarda uma citação
 Comece com p.115 para marcar a página (/citacao p.115 texto); sem isso, vale a página atual.
+
+Empréstimos:
+/emprestar #3 Maria — anota com quem ficou o livro
+/devolvido #3 — o livro voltou
+/emprestados — quem está com o quê
 
 Plano de leitura:
 /plano 25 — 25 páginas por dia a partir de hoje (/plano #3 25 15/10 escolhe livro e início)
 /plano — mostra o plano; /plano 0 remove
 /recalcular — refaz o plano a partir de hoje e da página atual
 
-Todo dia às 8h eu mando a meta de leitura do dia e, às 21h, lembro do que ainda falta.";
+Todo dia às 8h eu mando a meta de leitura do dia e, às 21h, lembro do que ainda falta (e da sequência de dias lendo).";
 
 /// Resposta a uma mensagem ou toque: texto e, opcionalmente, botões inline
 /// (rótulo, dados do callback) organizados em linhas.

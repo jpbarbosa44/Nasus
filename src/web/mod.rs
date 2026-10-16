@@ -60,14 +60,26 @@ fn ler_opcoes(args: &[String]) -> Result<Opcoes> {
 pub fn rodar(caminho_db: &Path, args: &[String]) -> Result<()> {
     let op = ler_opcoes(args)?;
     let db = Db::abrir(caminho_db).with_context(|| format!("abrindo {}", caminho_db.display()))?;
-    let mut api = Api::new(db, openlibrary::buscar);
-    let servidor = tiny_http::Server::http(("127.0.0.1", op.porta))
-        .map_err(|e| anyhow!("não deu para escutar em 127.0.0.1:{}: {e}", op.porta))?;
-    let url = format!("http://127.0.0.1:{}", op.porta);
+    let (servidor, porta) = iniciar(op.porta)?;
+    let url = format!("http://127.0.0.1:{porta}");
     println!("Nasus web em {url} — Ctrl+C encerra");
     if op.abrir {
         abrir_navegador(&url);
     }
+    servir(&servidor, Api::new(db, openlibrary::buscar));
+    Ok(())
+}
+
+/// iniciar escuta em 127.0.0.1 (porta 0 escolhe uma livre) e devolve a porta.
+pub fn iniciar(porta: u16) -> Result<(tiny_http::Server, u16)> {
+    let servidor = tiny_http::Server::http(("127.0.0.1", porta))
+        .map_err(|e| anyhow!("não deu para escutar em 127.0.0.1:{porta}: {e}"))?;
+    let porta = servidor.server_addr().to_ip().map_or(porta, |a| a.port());
+    Ok((servidor, porta))
+}
+
+/// servir atende uma requisição por vez, até o servidor ser fechado.
+pub fn servir(servidor: &tiny_http::Server, mut api: Api) {
     for mut req in servidor.incoming_requests() {
         let (status, tipo, corpo, baixar) = atender(&mut api, &mut req);
         let mut resp = tiny_http::Response::from_data(corpo)
@@ -88,7 +100,6 @@ pub fn rodar(caminho_db: &Path, args: &[String]) -> Result<()> {
             eprintln!("aviso: respondendo: {e}");
         }
     }
-    Ok(())
 }
 
 fn cabecalho(nome: &str, valor: &str) -> tiny_http::Header {
@@ -373,11 +384,20 @@ fn ler<T: DeserializeOwned>(corpo: &[u8]) -> std::result::Result<T, Falha> {
 pub struct Api {
     db: Db,
     buscar: Busca,
+    /// no app desktop, traz a janela para a frente (POST /api/focar)
+    ao_focar: Option<Box<dyn Fn() + Send>>,
 }
 
 impl Api {
     pub fn new(db: Db, buscar: Busca) -> Self {
-        Api { db, buscar }
+        Api { db, buscar, ao_focar: None }
+    }
+
+    /// ao_focar liga a rota POST /api/focar, que o app desktop usa para
+    /// trazer a janela aberta para a frente quando é aberto de novo.
+    pub fn ao_focar(mut self, f: impl Fn() + Send + 'static) -> Self {
+        self.ao_focar = Some(Box::new(f));
+        self
     }
 
     /// tratar atende uma chamada da API e devolve o status e o JSON. Não
@@ -437,6 +457,12 @@ impl Api {
                 self.livro_existente(id)?;
                 self.db.devolver(id, hoje).map_err(|e| Falha(400, format!("{e:#}")))?;
                 self.livro(id, hoje)
+            }
+            ("POST", "/api/focar") if self.ao_focar.is_some() => {
+                if let Some(f) = &self.ao_focar {
+                    f();
+                }
+                Ok(json!({ "ok": true }))
             }
             ("GET", "/api/series") => Ok(json!({ "series": self.db.series()? })),
             ("POST", "/api/livro/remover") => {

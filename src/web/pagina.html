@@ -682,6 +682,22 @@
       desenhar();
     });
 
+    // pedirTexto é o prompt() da página: a janela do app no macOS não mostra o do navegador
+    function pedirTexto(titulo, valor = "", tipo = "text") {
+      return new Promise((resolve) => {
+        modal(`<h3>${esc(titulo)}</h3><form id="form-pedir"><input id="pedir-valor" type="${tipo}" value="${esc(String(valor))}">
+          <div class="rodape"><button type="button" class="btn" data-fechar>Cancelar <kbd>Esc</kbd></button><button class="btn prim">OK <kbd>Enter</kbd></button></div></form>`, (m) => {
+          m.querySelector("#form-pedir").addEventListener("submit", (ev) => {
+            ev.preventDefault();
+            const v = m.querySelector("#pedir-valor").value;
+            fecharModal();
+            resolve(v);
+          });
+        });
+        $("#pedir-valor").select();
+      });
+    }
+
     function modal(html, aoAbrir) {
       $("#modal").innerHTML = `<div class="fundo"><div class="modal" role="dialog">${html}</div></div>`;
       const m = $("#modal .modal");
@@ -831,7 +847,7 @@
           await carregarLivros(); desenhar(); avisar("Devolvido.");
         });
       }
-      const pessoa = (prompt("Emprestar para quem?") || "").trim();
+      const pessoa = (await pedirTexto("Emprestar para quem?")).trim();
       if (!pessoa) return;
       e.detalhe = await api("POST", "/api/livro/emprestar", { id: b.id, pessoa });
       await carregarLivros(); desenhar(); avisar(`Emprestado para ${pessoa}.`);
@@ -991,7 +1007,7 @@
         if (k === "Escape" || k === "Backspace") voltar();
         else if (/^[1-5]$/.test(k)) mudarStatus(e.status[+k - 1].chave);
         else if (k === "p") { ev.preventDefault(); $("#pagina").select(); }
-        else if (k === "r") { const n = parseInt(prompt("Nota (0 a 5)", b.nota) ?? "", 10); if (n >= 0 && n <= 5) avaliar(n === b.nota ? n : n); }
+        else if (k === "r") pedirTexto("Nota (0 a 5)", b.nota, "number").then((v) => { const n = parseInt(v, 10); if (n >= 0 && n <= 5) avaliar(n); });
         else if (k === "n" || k === "c") { ev.preventDefault(); $("#tipo-nota").value = k === "c" ? "citacao" : "nota"; $("#texto-nota").focus(); }
         else if (k === "l") formPlano();
         else if (k === "L" && e.detalhe.plano) recalcular();

@@ -1,11 +1,25 @@
 [package]
 name = "nasus"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Curador das suas leituras: app de terminal e bot de Telegram para gerenciar livros, planos de leitura e metas"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/jpbarbosa44/Nasus"
+
+[features]
+# o app desktop (nasus-app) fica num binário separado: o nasus continua sem
+# depender de WebKitGTK no Linux (servidores, bot, MCP)
+app = ["dep:wry", "dep:tao"]
+
+[[bin]]
+name = "nasus"
+path = "src/main.rs"
+
+[[bin]]
+name = "nasus-app"
+path = "src/bin/nasus-app.rs"
+required-features = ["app"]
 
 [profile.release]
 strip = true
@@ -25,6 +39,8 @@ serde_json = "1"
 sha2 = "0.10"
 tiny_http = "0.12"
 ureq = { version = "2", features = ["json"] }
+wry = { version = "0.57", optional = true }
+tao = { version = "0.37", optional = true }
 
 [dev-dependencies]
 # o writer gera códigos de barras para os testes

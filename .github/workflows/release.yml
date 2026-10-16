@@ -1,7 +1,8 @@
 # Publica um Release no GitHub quando uma tag vX.Y.Z é enviada.
 # Builda os binários nativos de cada plataforma, empacota (.tar.gz / .zip),
-# gera o SHA256SUMS e anexa tudo ao release. Os binários também vão soltos
-# (nasus-linux-amd64, nasus-windows-amd64.exe...): é o que o `nasus atualizar` baixa.
+# gera o SHA256SUMS e anexa tudo ao release. Cada pacote leva o nasus e o app
+# desktop (nasus-app). Os binários também vão soltos (nasus-linux-amd64,
+# nasus-app-windows-amd64.exe...): é o que o `nasus atualizar` baixa.
 name: release
 
 on:
@@ -34,17 +35,25 @@ jobs:
         with:
           key: ${{ matrix.alvo }}
 
+      - name: WebKitGTK (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.alvo }}
+
+      - name: Build do app desktop
+        run: cargo build --release --locked --target ${{ matrix.alvo }} --features app --bin nasus-app
 
       - name: Empacotar (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.alvo }}/release/nasus dist/nasus
-          tar czf dist/nasus-${{ matrix.nome }}.tar.gz -C dist nasus
+          cp target/${{ matrix.alvo }}/release/nasus target/${{ matrix.alvo }}/release/nasus-app dist/
+          tar czf dist/nasus-${{ matrix.nome }}.tar.gz -C dist nasus nasus-app
           mv dist/nasus dist/nasus-${{ matrix.nome }}
+          mv dist/nasus-app dist/nasus-app-${{ matrix.nome }}
 
       - name: Empacotar (Windows)
         if: runner.os == 'Windows'
@@ -52,13 +61,17 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/${{ matrix.alvo }}/release/nasus.exe dist/nasus.exe
-          Compress-Archive -Path dist/nasus.exe -DestinationPath dist/nasus-${{ matrix.nome }}.zip
+          Copy-Item target/${{ matrix.alvo }}/release/nasus-app.exe dist/nasus-app.exe
+          Compress-Archive -Path dist/nasus.exe, dist/nasus-app.exe -DestinationPath dist/nasus-${{ matrix.nome }}.zip
           Move-Item dist/nasus.exe dist/nasus-${{ matrix.nome }}.exe
+          Move-Item dist/nasus-app.exe dist/nasus-app-${{ matrix.nome }}.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: nasus-${{ matrix.nome }}
-          path: dist/nasus-${{ matrix.nome }}*
+          path: |
+            dist/nasus-${{ matrix.nome }}*
+            dist/nasus-app-${{ matrix.nome }}*
 
   release:
     needs: build

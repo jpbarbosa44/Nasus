@@ -1,34 +1,24 @@
 //! Nasus: curador das suas leituras, no terminal.
 
-mod app;
-mod atualizar;
-mod bot;
-mod codigo_barras;
-mod dados;
-mod db;
-mod input;
-mod mcp;
-mod model;
-mod openlibrary;
-mod ui;
-mod web;
-
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-use app::App;
-use db::Db;
+use nasus::app::App;
+use nasus::db::Db;
+use nasus::{atualizar, bot, dados, desktop, mcp, ui, web};
 
 const USO: &str = "uso: nasus              abre o app no terminal
+     nasus app          abre o Nasus numa janela própria
      nasus web ...      abre a interface no navegador (nasus web --help)
      nasus bot ...      bot do Telegram (nasus bot --help)
      nasus exportar     grava a biblioteca em JSON ou CSV
      nasus importar     traz livros de um JSON do Nasus ou do Goodreads
      nasus restaurar    volta o banco para uma cópia de segurança
      nasus mcp          servidor MCP para o Claude consultar a biblioteca
+     nasus instalar-atalho   põe o Nasus no menu de aplicativos
      nasus atualizar    instala a última versão
      nasus versao       mostra a versão";
 
@@ -44,13 +34,16 @@ fn main() -> Result<()> {
         Some("importar" | "import") => return dados::importar(&caminho, &args[1..]),
         Some("restaurar" | "restore") => return dados::restaurar(&caminho, &args[1..]),
         Some("mcp") => return mcp::rodar(&caminho, &args[1..]),
+        Some("app" | "--app") => return desktop::abrir(&args[1..]),
+        Some("instalar-atalho") => return desktop::instalar_atalho(),
+        Some("remover-atalho") => return desktop::remover_atalho(),
         Some("atualizar" | "update") => return atualizar::atualizar(&caminho, &args[1..]),
         Some("versao" | "versão" | "--version" | "-V") => {
             atualizar::mostrar_versao();
             return Ok(());
         }
         Some("-h" | "--help" | "ajuda") => {
-            println!("{USO}\n\n{}\n\n{}\n\n{}\n\n{}", web::USO, bot::USO, dados::USO, mcp::USO);
+            println!("{USO}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}", desktop::USO, web::USO, bot::USO, dados::USO, mcp::USO);
             return Ok(());
         }
         Some(outro) => bail!("comando desconhecido: {outro}\n\n{USO}"),

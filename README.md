@@ -1,6 +1,6 @@
 # Nasus
 
-**Curador das suas leituras.** App de terminal (TUI) e bot de Telegram para acompanhar os livros que você lê: fila, progresso, planos de leitura, notas, citações e meta anual.
+**Curador das suas leituras.** App de terminal (TUI), app desktop e bot de Telegram para acompanhar os livros que você lê: fila, progresso, planos de leitura, notas, citações e meta anual.
 
 ```
           _________________ _________________
@@ -29,6 +29,7 @@
 - **Séries e coleções** com volume; ao terminar um, o Nasus sugere o próximo.
 - **Empréstimos**: com quem está cada livro e desde quando.
 - **Seus dados**: backup diário automático, exportar em JSON ou CSV e importar do Goodreads.
+- **App desktop** numa janela própria, com ícone no menu de aplicativos.
 - **Interface web** no navegador, com as mesmas telas e atalhos do app.
 - **Bot de Telegram** para usar pelo celular, com lembretes diários do plano.
 - **Servidor MCP** para o Claude consultar a sua biblioteca.
@@ -46,10 +47,11 @@ Baixe o pacote da sua plataforma na página de [Releases](https://github.com/jpb
 
 ```sh
 tar xzf nasus-linux-amd64.tar.gz
-mv nasus ~/.local/bin/   # ou outra pasta no PATH
+mv nasus nasus-app ~/.local/bin/   # ou outra pasta no PATH
+nasus instalar-atalho              # opcional: põe o Nasus no menu de aplicativos
 ```
 
-No macOS, se o sistema bloquear o binário baixado: `xattr -d com.apple.quarantine nasus`.
+O pacote traz dois programas: `nasus` (terminal, web, bot e MCP) e `nasus-app` (o app desktop). No macOS, se o sistema bloquear os binários baixados: `xattr -d com.apple.quarantine nasus nasus-app`.
 
 Para atualizar depois: `nasus atualizar` baixa a última versão e confere o SHA256 antes de trocar o binário. O app e o bot avisam quando sai uma versão nova.
 
@@ -57,12 +59,14 @@ Ou compile a partir do código (Rust 1.88+):
 
 ```sh
 cargo install --git https://github.com/jpbarbosa44/Nasus
+cargo install --git https://github.com/jpbarbosa44/Nasus --features app --bin nasus-app   # app desktop
 ```
 
 ## Uso
 
 ```sh
 nasus             # abre o app no terminal
+nasus app         # abre o app desktop
 nasus web         # abre a interface no navegador (nasus web --help)
 nasus bot         # bot do Telegram (nasus bot --help)
 nasus mcp         # servidor MCP para o Claude
@@ -96,6 +100,20 @@ nasus web --sem-abrir        # só sobe o servidor
 As mesmas telas do app de terminal no navegador: biblioteca com abas e categorias, detalhes com capa, plano e notas, estatísticas com mapa de calor e retrospectiva, e busca online (dá para enviar a foto do código de barras). Os atalhos são os mesmos (`a` adiciona, `e` edita, `p` registra a página, `1`-`7` trocam de tela, `?` ajuda).
 
 O servidor escuta **somente em `127.0.0.1`**: nada fica acessível pela rede, e requisições de outros sites são recusadas. A página vai embutida no binário, sem arquivos extras. O app, a web e o bot podem ficar abertos ao mesmo tempo sobre o mesmo banco. Ctrl+C encerra.
+
+## App desktop
+
+```sh
+nasus app                # abre a janela (ou chame nasus-app direto)
+nasus instalar-atalho    # Nasus no menu de aplicativos, com ícone
+nasus remover-atalho
+```
+
+A mesma interface web, numa janela própria em vez do navegador. O servidor sobe numa porta livre de `127.0.0.1` e fecha junto com a janela. Abrir o app de novo traz a janela que já está aberta para a frente, links externos abrem no navegador e o exportar salva na pasta Downloads.
+
+O atalho fica em `~/.local/share/applications` no Linux, no menu Iniciar no Windows e em `~/Applications/Nasus.app` no macOS.
+
+Requisitos: no Linux, o WebKitGTK (`libwebkit2gtk-4.1-0` no Debian/Ubuntu, `webkit2gtk4.1` no Fedora); no Windows, o WebView2, que já vem no Windows 10 e 11; no macOS 11 ou mais novo, nada além do sistema. Na primeira abertura no macOS, o Gatekeeper pode bloquear o app, que não é assinado: abra com o botão direito › Abrir, ou rode o `xattr` acima.
 
 ## Bot do Telegram
 

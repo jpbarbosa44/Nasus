@@ -21,9 +21,10 @@
 - **Categorias** livres por livro (romance, filosofia, clássico…), com filtro por categoria.
 - **Progresso**: registre a página atual; o livro passa a "lendo" sozinho e, na última página, o Nasus oferece marcar como lido. Datas de início e fim são preenchidas automaticamente.
 - **Plano de leitura**: informe o início e quantas páginas por dia (ex.: 800 páginas, 25/dia) e o Nasus calcula a data de fim, mostra a meta do dia e se você está à frente ou atrás.
-- **Busca por ISBN ou título**: ISBNs brasileiros na [BrasilAPI](https://brasilapi.com.br) (base da CBL), complementados pela [Open Library](https://openlibrary.org).
-- **Notas, citações e avaliação** de 0 a 5 estrelas.
-- **Estatísticas**: meta anual de livros, páginas lidas, nota média e livros por mês.
+- **Busca por ISBN ou título**: ISBNs brasileiros na [BrasilAPI](https://brasilapi.com.br) (base da CBL), complementados pela [Open Library](https://openlibrary.org), que também sugere as categorias. Ou mande a **foto do código de barras** da contracapa.
+- **Notas, citações e avaliação** de 0 a 5 estrelas; notas e citações aceitam a página (`p.115 texto`).
+- **Estatísticas**: meta anual de livros, páginas lidas, nota média, livros por mês e categorias mais lidas.
+- **Interface web** no navegador, com as mesmas telas e atalhos do app.
 - **Bot de Telegram** para usar pelo celular, com lembretes diários do plano.
 
 ## Instalação
@@ -54,10 +55,23 @@ cargo install --git https://github.com/jpbarbosa44/Nasus
 
 ```sh
 nasus          # abre o app no terminal
+nasus web      # abre a interface no navegador (nasus web --help)
 nasus bot      # bot do Telegram (nasus bot --help)
 ```
 
 Dentro do app, tecle `?` para ver todos os atalhos. Os dados ficam num SQLite em `~/.local/share/nasus/nasus.db` (Linux; no macOS/Windows, na pasta de dados do usuário). Use a variável `NASUS_DB` para escolher outro arquivo.
+
+## Interface web
+
+```sh
+nasus web                    # sobe o servidor e abre o navegador
+nasus web --porta 8080       # outra porta (padrão: 6278)
+nasus web --sem-abrir        # só sobe o servidor
+```
+
+As mesmas telas do app de terminal no navegador: biblioteca com abas e categorias, detalhes com capa, plano e notas, estatísticas e busca online (dá para enviar a foto do código de barras). Os atalhos são os mesmos (`a` adiciona, `e` edita, `p` registra a página, `1`-`7` trocam de tela, `?` ajuda).
+
+O servidor escuta **somente em `127.0.0.1`**: nada fica acessível pela rede, e requisições de outros sites são recusadas. A página vai embutida no binário, sem arquivos extras. O app, a web e o bot podem ficar abertos ao mesmo tempo sobre o mesmo banco. Ctrl+C encerra.
 
 ## Bot do Telegram
 

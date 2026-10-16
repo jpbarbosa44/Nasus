@@ -64,7 +64,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         f,
         app,
         Line::styled(" Biblioteca › Detalhes", cores::TITULO),
-        "p página · s status · r nota · l plano · L recalcular · n nota · c citação · x remover nota · e editar · d remover · Esc voltar",
+        "p página · s status · r nota · l plano · L recalcular · n nota · c citação · x remover nota · m emprestar · e editar · d remover · Esc voltar",
     );
     let autor = if b.author.is_empty() { "autor desconhecido" } else { &b.author };
     let paginas = match (b.pages, b.current_page) {
@@ -91,6 +91,23 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             },
         ),
     ];
+    if !b.serie.is_empty() {
+        let mut t = b.serie.clone();
+        if b.volume > 0 {
+            t += &format!(" · vol. {}", b.volume);
+        }
+        if let Some((n, lidos)) = app.serie_info {
+            t += &format!("  ({} na biblioteca, {} lidos)", n, lidos);
+        }
+        linhas.push(campo("Série", Span::raw(t)));
+    }
+    if let Some((pessoa, desde)) = &b.emprestado {
+        let dias = (Local::now().date_naive() - *desde).num_days();
+        linhas.push(campo(
+            "Emprestado",
+            Span::styled(format!("↗ com {pessoa} desde {} ({})", desde.format("%d/%m"), plural(dias, "dia")), cores::AMAR),
+        ));
+    }
     if let Some((r, fim)) = app.ritmo {
         let mut t = format!("{r:.0} pág/dia");
         if let Some(fim) = fim {

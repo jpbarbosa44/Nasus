@@ -6,7 +6,10 @@ use super::Db;
 use crate::model::{Book, Status, ler_categorias};
 
 const COLUNAS: &str = "id, title, author, isbn, pages, status, current_page, rating, review, started_at, finished_at,
-    (SELECT group_concat(name, ',') FROM book_categories c WHERE c.book_id = books.id)";
+    (SELECT group_concat(name, ',') FROM book_categories c WHERE c.book_id = books.id),
+    (SELECT person || char(9) || lent_at FROM loans l WHERE l.book_id = books.id AND l.returned_at IS NULL
+       ORDER BY l.id DESC LIMIT 1),
+    series, series_index";
 
 fn de_linha(r: &Row) -> rusqlite::Result<Book> {
     let status: String = r.get(5)?;
@@ -23,6 +26,12 @@ fn de_linha(r: &Row) -> rusqlite::Result<Book> {
         started_at: r.get(9)?,
         finished_at: r.get(10)?,
         categorias: ler_categorias(&r.get::<_, Option<String>>(11)?.unwrap_or_default()),
+        emprestado: r.get::<_, Option<String>>(12)?.and_then(|s| {
+            let (pessoa, dia) = s.split_once('\t')?;
+            Some((pessoa.to_string(), dia.parse().ok()?))
+        }),
+        serie: r.get(13)?,
+        volume: r.get(14)?,
     })
 }
 
@@ -64,11 +73,12 @@ impl Db {
     pub fn inserir_livro(&self, b: &Book) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO books (title, author, isbn, pages, status, current_page, rating, review, started_at, finished_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO books (title, author, isbn, pages, status, current_page, rating, review, started_at, finished_at,
+               series, series_index)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 b.title, b.author, b.isbn, b.pages, b.status.chave(), b.current_page, b.rating,
-                b.review, b.started_at, b.finished_at
+                b.review, b.started_at, b.finished_at, b.serie, b.volume
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -108,6 +118,37 @@ impl Db {
         Ok(v)
     }
 
+    /// series devolve os nomes das séries em uso, em ordem alfabética.
+    pub fn series(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT series FROM books WHERE series <> '' GROUP BY lower(series) ORDER BY series COLLATE NOCASE",
+        )?;
+        let v = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(v)
+    }
+
+    /// serie devolve os livros da série, pela ordem dos volumes.
+    pub fn serie(&self, nome: &str) -> Result<Vec<Book>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUNAS} FROM books WHERE series <> '' AND lower(series) = lower(?1)
+             ORDER BY series_index, title COLLATE NOCASE"
+        ))?;
+        let v = stmt.query_map([nome.trim()], de_linha)?.collect::<rusqlite::Result<_>>()?;
+        Ok(v)
+    }
+
+    /// proximo_da_serie é o primeiro volume depois deste que ainda não foi
+    /// lido nem abandonado.
+    pub fn proximo_da_serie(&self, b: &Book) -> Result<Option<Book>> {
+        if b.serie.is_empty() || b.volume <= 0 {
+            return Ok(None);
+        }
+        Ok(self
+            .serie(&b.serie)?
+            .into_iter()
+            .find(|o| o.volume > b.volume && !matches!(o.status, Status::Lido | Status::Abandonado)))
+    }
+
     pub fn remover_livro(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM books WHERE id = ?1", [id])?;
         Ok(())
@@ -118,11 +159,11 @@ impl Db {
 fn atualizar(conn: &Connection, b: &Book) -> Result<()> {
     conn.execute(
         "UPDATE books SET title = ?2, author = ?3, isbn = ?4, pages = ?5, status = ?6, current_page = ?7,
-           rating = ?8, review = ?9, started_at = ?10, finished_at = ?11
+           rating = ?8, review = ?9, started_at = ?10, finished_at = ?11, series = ?12, series_index = ?13
          WHERE id = ?1",
         params![
             b.id, b.title, b.author, b.isbn, b.pages, b.status.chave(), b.current_page, b.rating,
-            b.review, b.started_at, b.finished_at
+            b.review, b.started_at, b.finished_at, b.serie, b.volume
         ],
     )?;
     gravar_categorias(conn, b.id, &b.categorias)
@@ -175,6 +216,26 @@ mod tests {
         }
         let titulos: Vec<_> = db.livros().unwrap().into_iter().map(|b| b.title).collect();
         assert_eq!(titulos, ["C", "A", "D", "B"]);
+    }
+
+    #[test]
+    fn series_e_proximo_volume() {
+        let db = Db::em_memoria().unwrap();
+        let vol = |titulo: &str, volume, status| {
+            let b = Book { title: titulo.into(), serie: "Duna".into(), volume, status, ..Book::novo() };
+            db.inserir_livro(&b).map(|id| Book { id, ..b }).unwrap()
+        };
+        let d1 = vol("Duna", 1, Status::Lido);
+        vol("O Messias de Duna", 2, Status::Lido);
+        let d3 = vol("Os Filhos de Duna", 3, Status::Estante);
+        vol("O Imperador-Deus de Duna", 4, Status::QueroLer);
+        db.inserir_livro(&Book { title: "Avulso".into(), ..Book::novo() }).unwrap();
+
+        assert_eq!(db.series().unwrap(), ["Duna"]);
+        assert_eq!(db.serie("duna").unwrap().iter().map(|b| b.volume).collect::<Vec<_>>(), [1, 2, 3, 4]);
+        assert_eq!(db.proximo_da_serie(&d1).unwrap().map(|b| b.id), Some(d3.id), "pula o volume 2, já lido");
+        assert_eq!(db.livro(d3.id).unwrap().serie, "Duna");
+        assert!(db.proximo_da_serie(&Book::novo()).unwrap().is_none());
     }
 
     #[test]

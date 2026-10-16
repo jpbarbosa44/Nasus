@@ -3,6 +3,7 @@
 
 mod backup;
 mod books;
+mod emprestimos;
 mod historico;
 mod notes;
 mod plans;
@@ -15,6 +16,7 @@ use directories::ProjectDirs;
 use rusqlite::Connection;
 
 pub use backup::{backups, pasta_backups, restaurar};
+pub use emprestimos::Emprestimo;
 pub use historico::Sequencia;
 pub use stats::Estatisticas;
 
@@ -67,6 +69,18 @@ CREATE TABLE reading_log (
     to_page   INTEGER NOT NULL,
     PRIMARY KEY (book_id, day)
 );
+"#, r#"
+CREATE TABLE loans (
+    id          INTEGER PRIMARY KEY,
+    book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    person      TEXT    NOT NULL,
+    lent_at     TEXT    NOT NULL,
+    returned_at TEXT
+);
+CREATE INDEX loans_book ON loans(book_id);
+"#, r#"
+ALTER TABLE books ADD COLUMN series TEXT NOT NULL DEFAULT '';
+ALTER TABLE books ADD COLUMN series_index INTEGER NOT NULL DEFAULT 0;
 "#];
 
 pub struct Db {

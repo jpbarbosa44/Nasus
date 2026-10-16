@@ -244,6 +244,9 @@ fn livro_json(b: &Book) -> Value {
         "inicio": data(b.started_at),
         "fim": data(b.finished_at),
         "categorias": b.categorias,
+        "serie": b.serie,
+        "volume": b.volume,
+        "emprestado": b.emprestado.as_ref().map(|(p, d)| json!({ "pessoa": p, "desde": d.format("%d/%m/%Y").to_string() })),
     })
 }
 
@@ -287,6 +290,12 @@ struct Id {
 }
 
 #[derive(Deserialize)]
+struct Emprestar {
+    id: i64,
+    pessoa: String,
+}
+
+#[derive(Deserialize)]
 struct LivroForm {
     id: Option<i64>,
     titulo: String,
@@ -302,6 +311,10 @@ struct LivroForm {
     status: Option<String>,
     #[serde(default)]
     resenha: String,
+    #[serde(default)]
+    serie: String,
+    #[serde(default)]
+    volume: i64,
 }
 
 #[derive(Deserialize)]
@@ -390,7 +403,11 @@ impl Api {
                 let mut b = self.livro_existente(m.id)?;
                 b.mudar_status(novo, hoje);
                 self.db.salvar_progresso(&b, hoje)?;
-                Ok(json!({ "livro": livro_json(&b) }))
+                let proximo = match novo {
+                    Status::Lido => self.db.proximo_da_serie(&b)?.map(|p| livro_json(&p)),
+                    _ => None,
+                };
+                Ok(json!({ "livro": livro_json(&b), "proximo": proximo }))
             }
             ("POST", "/api/livro/pagina") => {
                 let p: Pagina = ler(corpo)?;
@@ -409,6 +426,19 @@ impl Api {
                 self.db.salvar_livro(&b)?;
                 Ok(json!({ "livro": livro_json(&b) }))
             }
+            ("POST", "/api/livro/emprestar") => {
+                let e: Emprestar = ler(corpo)?;
+                self.livro_existente(e.id)?;
+                self.db.emprestar(e.id, &e.pessoa, hoje).map_err(|e| Falha(400, format!("{e:#}")))?;
+                self.livro(e.id, hoje)
+            }
+            ("POST", "/api/livro/devolver") => {
+                let Id { id } = ler(corpo)?;
+                self.livro_existente(id)?;
+                self.db.devolver(id, hoje).map_err(|e| Falha(400, format!("{e:#}")))?;
+                self.livro(id, hoje)
+            }
+            ("GET", "/api/series") => Ok(json!({ "series": self.db.series()? })),
             ("POST", "/api/livro/remover") => {
                 let Id { id } = ler(corpo)?;
                 self.livro_existente(id)?;
@@ -557,6 +587,8 @@ impl Api {
         b.pages = f.paginas;
         b.categorias = ler_categorias(&f.categorias);
         b.review = f.resenha.trim().into();
+        b.serie = f.serie.trim().into();
+        b.volume = if b.serie.is_empty() { 0 } else { f.volume.max(0) };
         if b.pages > 0 {
             b.current_page = b.current_page.min(b.pages);
         }
@@ -689,8 +721,13 @@ mod tests {
 
         assert_eq!(post(&mut a, "/api/livro/avaliar", json!({ "id": id, "nota": 5 })).1["livro"]["nota"], 5);
         assert_eq!(post(&mut a, "/api/livro/avaliar", json!({ "id": id, "nota": 9 })).0, 400);
+        let (_, v) = post(&mut a, "/api/livro", json!({ "titulo": "O Messias de Duna", "serie": "Duna", "volume": 2 }));
+        let messias = v["livro"]["id"].as_i64().unwrap();
+        post(&mut a, "/api/livro", json!({ "id": id, "titulo": "Duna", "isbn": "9788535914849", "paginas": 680, "serie": "Duna", "volume": 1, "categorias": "ficção científica, clássico" }));
+        assert_eq!(get(&mut a, "/api/series", "").1["series"], json!(["Duna"]));
         let (_, v) = post(&mut a, "/api/livro/status", json!({ "id": id, "status": "read" }));
         assert_eq!(v["livro"]["pagina_atual"], 680);
+        assert_eq!(v["proximo"]["id"], messias, "{v}");
 
         let (_, v) = get(&mut a, "/api/estatisticas", "ano=2026");
         assert_eq!(v["lidos"], 1);
@@ -702,6 +739,12 @@ mod tests {
         let (_, v) = get(&mut a, "/api/buscar", "q=duna");
         assert_eq!(v["resultados"][0]["ja_tenho"], id, "a busca avisa o que já está na biblioteca");
 
+        let (s, v) = post(&mut a, "/api/livro/emprestar", json!({ "id": id, "pessoa": "Maria" }));
+        assert_eq!((s, v["livro"]["emprestado"]["pessoa"].clone()), (200, json!("Maria")), "{v}");
+        assert_eq!(post(&mut a, "/api/livro/emprestar", json!({ "id": id, "pessoa": "João" })).0, 400, "já emprestado");
+        let (_, v) = post(&mut a, "/api/livro/devolver", json!({ "id": id }));
+        assert_eq!(v["livro"]["emprestado"], Value::Null);
+        assert_eq!(post(&mut a, "/api/livro/devolver", json!({ "id": id })).0, 400);
         assert_eq!(post(&mut a, "/api/nota/remover", json!({ "id": nota })).0, 200);
         assert_eq!(post(&mut a, "/api/livro/remover", json!({ "id": id })).0, 200);
         assert_eq!(get(&mut a, "/api/livro", &format!("id={id}")).0, 404);

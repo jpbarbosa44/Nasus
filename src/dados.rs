@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{self, Db};
+use crate::db::{self, Db, Emprestimo};
 use crate::model::{Book, Note, NoteKind, Plano, Status, ler_categorias};
 
 pub const USO: &str = "uso: nasus exportar [--saida ARQUIVO]
@@ -42,10 +42,20 @@ struct LivroJson {
     inicio: Option<NaiveDate>,
     fim: Option<NaiveDate>,
     categorias: Vec<String>,
+    serie: String,
+    volume: i64,
     notas: Vec<NotaJson>,
     plano: Option<PlanoJson>,
     /// (dia, de, até)
     historico: Vec<(NaiveDate, i64, i64)>,
+    emprestimos: Vec<EmprestimoJson>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct EmprestimoJson {
+    pessoa: String,
+    desde: NaiveDate,
+    devolvido: Option<NaiveDate>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -103,6 +113,11 @@ pub fn exportar_json(db: &Db) -> Result<String> {
             paginas_dia: p.paginas_dia,
         });
         let historico = db.leituras(b.id)?;
+        let emprestimos = db
+            .emprestimos(b.id)?
+            .into_iter()
+            .map(|e| EmprestimoJson { pessoa: e.pessoa, desde: e.desde, devolvido: e.devolvido })
+            .collect();
         a.livros.push(LivroJson {
             titulo: b.title,
             autor: b.author,
@@ -115,9 +130,12 @@ pub fn exportar_json(db: &Db) -> Result<String> {
             inicio: b.started_at,
             fim: b.finished_at,
             categorias: b.categorias,
+            serie: b.serie,
+            volume: b.volume,
             notas,
             plano,
             historico,
+            emprestimos,
         });
     }
     Ok(serde_json::to_string_pretty(&a)? + "\n")
@@ -128,7 +146,8 @@ pub fn exportar_json(db: &Db) -> Result<String> {
 pub fn exportar_csv(db: &Db) -> Result<String> {
     let mut w = csv::WriterBuilder::new().delimiter(b';').from_writer(Vec::new());
     w.write_record([
-        "titulo", "autor", "isbn", "paginas", "status", "pagina_atual", "nota", "inicio", "fim", "categorias", "resenha",
+        "titulo", "autor", "isbn", "paginas", "status", "pagina_atual", "nota", "inicio", "fim", "categorias", "serie",
+        "volume", "emprestado_para", "resenha",
     ])?;
     let data = |d: Option<NaiveDate>| d.map(|d| d.format("%d/%m/%Y").to_string()).unwrap_or_default();
     for b in db.livros()? {
@@ -143,6 +162,9 @@ pub fn exportar_csv(db: &Db) -> Result<String> {
             data(b.started_at),
             data(b.finished_at),
             b.categorias.join(", "),
+            b.serie.clone(),
+            if b.volume > 0 { b.volume.to_string() } else { String::new() },
+            b.emprestado.as_ref().map(|(p, _)| p.clone()).unwrap_or_default(),
             b.review.clone(),
         ])?;
     }
@@ -156,6 +178,7 @@ struct Importado {
     notas: Vec<Note>,
     plano: Option<Plano>,
     historico: Vec<(NaiveDate, i64, i64)>,
+    emprestimos: Vec<Emprestimo>,
 }
 
 /// O que a importação vai fazer, para mostrar antes de gravar.
@@ -224,6 +247,9 @@ pub fn gravar_importacao(db: &Db, imp: Importacao) -> Result<usize> {
         for (dia, de, ate) in item.historico {
             db.inserir_leitura(id, dia, de, ate)?;
         }
+        for e in &item.emprestimos {
+            db.inserir_emprestimo(id, e)?;
+        }
     }
     for (ano, livros) in imp.metas {
         if db.meta(ano)?.is_none() {
@@ -259,6 +285,8 @@ fn ler_json(texto: &str) -> Result<(Vec<Importado>, Metas)> {
                 started_at: l.inicio,
                 finished_at: l.fim,
                 categorias: ler_categorias(&l.categorias.join(",")),
+                serie: l.serie.trim().into(),
+                volume: l.volume.max(0),
                 ..Book::novo()
             },
             notas: l
@@ -280,6 +308,11 @@ fn ler_json(texto: &str) -> Result<(Vec<Importado>, Metas)> {
                 paginas_dia: p.paginas_dia,
             }),
             historico: l.historico,
+            emprestimos: l
+                .emprestimos
+                .into_iter()
+                .map(|e| Emprestimo { pessoa: e.pessoa, desde: e.desde, devolvido: e.devolvido })
+                .collect(),
         })
         .collect();
     Ok((itens, a.metas))
@@ -342,9 +375,25 @@ fn ler_goodreads(texto: &str) -> Result<Vec<Importado>> {
             b.finished_at = data(campo(lido_em));
             b.current_page = pages;
         }
-        v.push(Importado { livro: b, notas: Vec::new(), plano: None, historico: Vec::new() });
+        (b.title, b.serie, b.volume) = separar_serie(&b.title);
+        v.push(Importado { livro: b, notas: Vec::new(), plano: None, historico: Vec::new(), emprestimos: Vec::new() });
     }
     Ok(v)
+}
+
+/// separar_serie tira a série do título no jeito do Goodreads:
+/// "Duna (Crônicas de Duna, #1)" vira ("Duna", "Crônicas de Duna", 1).
+fn separar_serie(titulo: &str) -> (String, String, i64) {
+    let sem = || (titulo.to_string(), String::new(), 0);
+    let Some(resto) = titulo.strip_suffix(')') else { return sem() };
+    let Some((nome, dentro)) = resto.rsplit_once(" (") else { return sem() };
+    let Some((serie, n)) = dentro.rsplit_once(", #").or_else(|| dentro.rsplit_once(" #")) else { return sem() };
+    // "#1-3" (box) ou "#0.5" (conto): fica só a parte inteira do começo
+    let digitos: String = n.chars().take_while(|c| c.is_ascii_digit()).collect();
+    match digitos.parse::<i64>() {
+        Ok(v) if !serie.trim().is_empty() => (nome.trim().to_string(), serie.trim().to_string(), v),
+        _ => sem(),
+    }
 }
 
 // --- linha de comando ---
@@ -467,7 +516,10 @@ mod tests {
         db.aplicar_plano(&b, dia(1), 0, 20).unwrap();
         let mut lido = Book { title: "Dom Casmurro".into(), author: "Machado de Assis".into(), pages: 256, rating: 5, ..Book::novo() };
         lido.mudar_status(Status::Lido, dia(5));
-        db.inserir_livro(&lido).unwrap();
+        lido.serie = "Machado".into();
+        lido.volume = 3;
+        let lido_id = db.inserir_livro(&lido).unwrap();
+        db.emprestar(lido_id, "Maria", dia(6)).unwrap();
         db.definir_meta(2026, 12).unwrap();
         db
     }
@@ -505,7 +557,7 @@ mod tests {
 
     const GOODREADS: &str = "\
 Book Id,Title,Author,Author l-f,Additional Authors,ISBN,ISBN13,My Rating,Average Rating,Publisher,Binding,Number of Pages,Year Published,Original Publication Year,Date Read,Date Added,Bookshelves,Bookshelves with positions,Exclusive Shelf,My Review,Spoiler,Private Notes,Read Count,Owned Copies
-1,\"Dune\",Frank Herbert,\"Herbert, Frank\",,\"=\"\"0441013597\"\"\",\"=\"\"9780441013593\"\"\",5,4.25,Ace,Paperback,688,2005,1965,2024/03/10,2024/01/02,\"sci-fi, favorites\",\"sci-fi (#1)\",read,Muito bom.<br/>Recomendo,,,1,0
+1,\"Dune (Dune Chronicles, #1)\",Frank Herbert,\"Herbert, Frank\",,\"=\"\"0441013597\"\"\",\"=\"\"9780441013593\"\"\",5,4.25,Ace,Paperback,688,2005,1965,2024/03/10,2024/01/02,\"sci-fi, favorites\",\"sci-fi (#1)\",read,Muito bom.<br/>Recomendo,,,1,0
 2,\"Dom Casmurro\",Machado de Assis,,,\"=\"\"\"\"\",\"=\"\"\"\"\",0,4.0,,,256,,,,2024/05/01,currently-reading,,currently-reading,,,,0,0
 3,\"Duna\",Frank Herbert,,,\"=\"\"\"\"\",\"=\"\"9788576573135\"\"\",0,4.3,,,680,,,,2024/05/01,to-read,,to-read,,,,0,0
 ";
@@ -523,6 +575,10 @@ Book Id,Title,Author,Author l-f,Additional Authors,ISBN,ISBN13,My Rating,Average
         assert_eq!(b.finished_at, NaiveDate::from_ymd_opt(2024, 3, 10));
         assert_eq!(b.categorias, ["favorites", "sci fi"]);
         assert_eq!(b.review, "Muito bom.\nRecomendo");
+        assert_eq!((b.serie.as_str(), b.volume), ("Dune Chronicles", 1));
+        assert_eq!(separar_serie("Sem série"), ("Sem série".into(), String::new(), 0));
+        assert_eq!(separar_serie("Contos (Coleção #2.5)"), ("Contos".into(), "Coleção".into(), 2));
+        assert_eq!(separar_serie("Livro (edição revista)"), ("Livro (edição revista)".into(), String::new(), 0));
     }
 
     #[test]

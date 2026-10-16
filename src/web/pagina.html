@@ -181,6 +181,7 @@
     .calor i.n3 { background: color-mix(in srgb, var(--cy) 80%, var(--borda)); }
     .calor i.n4 { background: var(--cy); }
     .ritmo { color: var(--cy); }
+    .emp { color: var(--amar); }
     .plano-linha { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
     .plano-linha > div { width: 150px; }
     .situacao { margin-top: 8px; }
@@ -315,14 +316,19 @@
       e.livros = v.livros;
       e.status = v.status;
       e.categorias = (await api("GET", "/api/categorias")).categorias;
+      e.series = (await api("GET", "/api/series")).series;
     }
+
+    // filtro especial no lugar de uma categoria
+    const EMPRESTADOS = "↗ emprestados";
 
     function visiveis() {
       const f = e.filtro.toLowerCase();
       return e.livros.filter((b) =>
         (e.aba === "todos" || b.status === e.aba) &&
-        (!e.categoria || b.categorias.includes(e.categoria)) &&
-        (!f || b.titulo.toLowerCase().includes(f) || b.autor.toLowerCase().includes(f) || b.categorias.some((c) => c.includes(f))));
+        (!e.categoria || (e.categoria === EMPRESTADOS ? !!b.emprestado : b.categorias.includes(e.categoria))) &&
+        (!f || b.titulo.toLowerCase().includes(f) || b.autor.toLowerCase().includes(f) || b.categorias.some((c) => c.includes(f)) ||
+          b.serie.toLowerCase().includes(f) || (b.emprestado && b.emprestado.pessoa.toLowerCase().includes(f))));
     }
     const contagem = (aba) => e.livros.filter((b) => aba === "todos" || b.status === aba).length;
 
@@ -401,13 +407,15 @@
         const rot = a === "todos" ? "Todos" : statusDe(a).rotulo;
         return `<button data-aba="${a}" class="${a === e.aba ? "ativo" : ""}">${esc(rot)} (${contagem(a)})</button>`;
       }).join("");
-      const chips = e.categorias.map((c) => `<button class="chip ${c.nome === e.categoria ? "ativo" : ""}" data-cat="${esc(c.nome)}">${esc(c.nome)} <small>${c.livros}</small></button>`).join("");
+      const nEmp = e.livros.filter((b) => b.emprestado).length;
+      const chipEmp = nEmp ? `<button class="chip ${e.categoria === EMPRESTADOS ? "ativo" : ""}" data-cat="${EMPRESTADOS}">↗ emprestados <small>${nEmp}</small></button>` : "";
+      const chips = chipEmp + e.categorias.map((c) => `<button class="chip ${c.nome === e.categoria ? "ativo" : ""}" data-cat="${esc(c.nome)}">${esc(c.nome)} <small>${c.livros}</small></button>`).join("");
       const linhas = lista.map((b, i) => {
         const st = statusDe(b.status);
         const prog = b.progresso != null ? barra(b.progresso) : b.pagina_atual > 0 ? `<span class="dim">p. ${b.pagina_atual}</span>` : `<span class="dim">—</span>`;
         return `<tr data-livro="${b.id}" class="${i === e.sel ? "sel" : ""}">
           <td class="st-${b.status}" title="${esc(st.nome)}">${st.simbolo}</td>
-          <td class="titulo">${esc(b.titulo)}</td>
+          <td class="titulo">${esc(b.titulo)}${b.emprestado ? ` <span class="emp" title="com ${esc(b.emprestado.pessoa)}">↗</span>` : ""}</td>
           <td class="dim col-autor">${esc(b.autor)}</td>
           <td class="dim col-cat">${esc(b.categorias.join(", "))}</td>
           <td>${prog}</td>
@@ -462,6 +470,10 @@
               <dt>Período</dt><dd>${b.inicio || "—"} → ${b.fim || "—"}</dd>
               <dt>Nota</dt><dd class="estrelas-btn">${estr}</dd>
               <dt>Categorias</dt><dd>${b.categorias.length ? esc(b.categorias.join(" · ")) : `<span class="dim">— (e para pôr)</span>`}</dd>
+              ${b.serie ? `<dt>Série</dt><dd>${esc(b.serie)}${b.volume ? ` · vol. ${b.volume}` : ""}</dd>` : ""}
+              <dt>Empréstimo</dt><dd>${b.emprestado
+                ? `<span class="emp">↗ com ${esc(b.emprestado.pessoa)} desde ${b.emprestado.desde}</span> <button class="btn" data-acao="devolver">Devolvido<kbd>m</kbd></button>`
+                : `<button class="btn" data-acao="emprestar">Emprestar<kbd>m</kbd></button>`}</dd>
               ${ritmo ? `<dt>Ritmo</dt><dd class="ritmo">${ritmo.paginas_dia} pág/dia${ritmo.fim ? ` · no seu ritmo, termina em ${ritmo.fim}` : ""}</dd>` : ""}
             </dl>
             <div style="margin-bottom:12px">${barra(b.progresso)}</div>
@@ -573,7 +585,7 @@
       const linhas = [
         ["Menu", "1-7 trocam de tela · ? esta ajuda"],
         ["Biblioteca", "←→ trocam a aba · ↑↓ movem · Enter abre · a adiciona · e edita · d remove · / filtra · c limpa a categoria · o busca online"],
-        ["Detalhes", "p página atual · 1-5 status · r nota · l plano · L recalcular plano · n nota · c citação · e editar · d remover · Esc voltar"],
+        ["Detalhes", "p página atual · 1-5 status · r nota · l plano · L recalcular plano · n nota · c citação · m emprestar/devolver · e editar · d remover · Esc voltar"],
         ["Estatísticas", "←→ trocam o ano · g define a meta (0 remove)"],
         ["Buscar online", "digite ISBN ou título e Enter · ↑↓ escolhem · Enter adiciona · ou envie a foto do código de barras"],
         ["Formulários", "Enter salva · Esc cancela"],
@@ -663,6 +675,11 @@
             <div><label for="f-isbn">ISBN</label><input id="f-isbn" value="${esc(b.isbn)}"></div>
             <div><label for="f-paginas">Páginas</label><input id="f-paginas" type="number" min="0" value="${b.paginas || ""}"></div>
           </div>
+          <div class="grade2">
+            <div><label for="f-serie">Série</label><input id="f-serie" list="l-series" value="${esc(b.serie || "")}" placeholder="ex.: Duna">
+              <datalist id="l-series">${(e.series || []).map((s) => `<option value="${esc(s)}">`).join("")}</datalist></div>
+            <div><label for="f-volume">Volume</label><input id="f-volume" type="number" min="0" value="${b.volume || ""}"></div>
+          </div>
           <label for="f-cats">Categorias</label><input id="f-cats" value="${esc((b.categorias || []).join(", "))}">
           <div class="dica">${sugestoes}</div>
           <label for="f-status">Status</label><select id="f-status">${opcoes}</select>
@@ -675,6 +692,7 @@
           const r = await api("POST", "/api/livro", {
             id: b.id || null, titulo: v("#f-titulo"), autor: v("#f-autor"), isbn: v("#f-isbn"),
             paginas: parseInt(v("#f-paginas") || "0", 10), categorias: v("#f-cats"), status: v("#f-status"), resenha: v("#f-resenha"),
+            serie: v("#f-serie"), volume: parseInt(v("#f-volume") || "0", 10),
           });
           fecharModal();
           await carregarLivros();
@@ -752,10 +770,26 @@
       else avisar("Progresso salvo.");
     });
     const mudarStatus = tenta(async (status) => {
-      await api("POST", "/api/livro/status", { id: e.detalhe.livro.id, status });
+      const r = await api("POST", "/api/livro/status", { id: e.detalhe.livro.id, status });
       await recarregarDetalhe();
       const s = statusDe(status);
-      avisar(`Status: ${s.simbolo} ${s.nome}`);
+      if (r.proximo) {
+        const p = r.proximo;
+        confirmar(`Lido! O próximo da série é ${p.titulo} (vol. ${p.volume}). Abrir?`, () => abrirDetalhe(p.id));
+      } else avisar(`Status: ${s.simbolo} ${s.nome}`);
+    });
+    const emprestar = tenta(async () => {
+      const b = e.detalhe.livro;
+      if (b.emprestado) {
+        return confirmar(`${b.emprestado.pessoa} devolveu o livro?`, async () => {
+          e.detalhe = await api("POST", "/api/livro/devolver", { id: b.id });
+          await carregarLivros(); desenhar(); avisar("Devolvido.");
+        });
+      }
+      const pessoa = (prompt("Emprestar para quem?") || "").trim();
+      if (!pessoa) return;
+      e.detalhe = await api("POST", "/api/livro/emprestar", { id: b.id, pessoa });
+      await carregarLivros(); desenhar(); avisar(`Emprestado para ${pessoa}.`);
     });
     const avaliar = tenta(async (n) => {
       const b = e.detalhe.livro;
@@ -827,6 +861,7 @@
         case "plano": return formPlano();
         case "recalcular": return recalcular();
         case "meta": return formMeta();
+        case "emprestar": case "devolver": return emprestar();
       }
     });
 
@@ -913,6 +948,7 @@
         else if (k === "l") formPlano();
         else if (k === "L" && e.detalhe.plano) recalcular();
         else if (k === "e") formLivro(b);
+        else if (k === "m") emprestar();
         else if (k === "d") removerLivro(b.id, b.titulo);
       } else if (e.tela === "stats") {
         if (k === "ArrowLeft" || k === "ArrowRight") tenta(async () => { await abrirStats(e.ano + (k === "ArrowLeft" ? -1 : 1)); desenhar(); })();

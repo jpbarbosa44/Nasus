@@ -86,6 +86,11 @@ fn separar_id(s: &str) -> (Option<i64>, String) {
     (None, partes.join(" "))
 }
 
+/// volume descreve a posição do livro na série: "Duna, vol. 2".
+fn volume(b: &Book) -> String {
+    if b.volume > 0 { format!("{}, vol. {}", b.serie, b.volume) } else { b.serie.clone() }
+}
+
 /// ler_pagina reconhece "120", "+25", "120 #3": (relativo, número, livro).
 fn ler_pagina(texto: &str) -> Option<(bool, i64, Option<i64>)> {
     let (id, resto) = separar_id(texto);
@@ -208,6 +213,10 @@ impl Nucleo {
                 "plano" => self.plano(resto, hoje),
                 "recalcular" => self.recalcular(resto, hoje),
                 "meta" => self.meta(resto, hoje),
+                "emprestar" => self.emprestar(resto, hoje),
+                "devolvido" | "devolver" => self.devolver(resto, hoje),
+                "emprestados" => self.emprestados(hoje),
+                "serie" | "série" => self.serie(resto),
                 _ => bail!("comando desconhecido; mande /ajuda"),
             };
         }
@@ -304,19 +313,27 @@ impl Nucleo {
         let mut b = self.db.livro(id)?;
         b.mudar_status(novo, hoje);
         self.db.salvar_progresso(&b, hoje)?;
+        let mut botoes = Vec::new();
         let extra = match novo {
             Status::Lido => {
                 let e = self.db.estatisticas(hoje.year())?;
-                match e.meta {
+                let mut t = match e.meta {
                     Some(m) if m > 0 => format!("\n🎯 {} de {m} livros na meta de {}.", e.lidos, hoje.year()),
                     _ => format!("\n{} lidos em {}.", plural(e.lidos, "livro"), hoje.year()),
+                };
+                if let Some(p) = self.db.proximo_da_serie(&b)? {
+                    t += &format!("\n\n📚 Próximo da série: #{} {} (vol. {})", p.id, p.title, p.volume);
+                    if p.status != Status::Lendo {
+                        botoes.push(vec![("▶ Começar".to_string(), format!("lendo:{}", p.id))]);
+                    }
                 }
+                t
             }
             Status::Lendo => "\nBoa leitura! Mande a página quando avançar, ou /plano 25 para um ritmo.".into(),
             Status::QueroLer => "\nEstá na /fila.".into(),
             _ => String::new(),
         };
-        Ok(Resposta::texto(format!("{} {}: {}{extra}", novo.simbolo(), b.title, novo.nome())))
+        Ok(Resposta { botoes, ..Resposta::texto(format!("{} {}: {}{extra}", novo.simbolo(), b.title, novo.nome())) })
     }
 
     fn lendo(&self, hoje: NaiveDate) -> Result<Resposta> {
@@ -392,6 +409,12 @@ impl Nucleo {
         }
         if !b.categorias.is_empty() {
             t += &format!("\n🏷 {}", b.categorias.join(" · "));
+        }
+        if !b.serie.is_empty() {
+            t += &format!("\n📚 {}", volume(b));
+        }
+        if let Some((pessoa, desde)) = &b.emprestado {
+            t += &format!("\n↗ emprestado para {pessoa} desde {}", data_curta(*desde));
         }
         if let Some(p) = self.db.plano(b.id)? {
             t += &format!("\n{}", descricao_plano(b, &p, hoje));
@@ -585,6 +608,75 @@ impl Nucleo {
             format!("🏷 {}: sem categorias", b.title)
         } else {
             format!("🏷 {}: {}", b.title, b.categorias.join(" · "))
+        }))
+    }
+
+    fn emprestar(&mut self, resto: &str, hoje: NaiveDate) -> Result<Resposta> {
+        let (id, pessoa) = separar_id(resto);
+        let id = id.context("use /emprestar #id nome")?;
+        self.db.emprestar(id, &pessoa, hoje)?;
+        let b = self.db.livro(id)?;
+        Ok(Resposta::texto(format!("↗ {} emprestado para {}. Quando voltar: /devolvido #{id}", b.title, pessoa.trim())))
+    }
+
+    fn devolver(&mut self, resto: &str, hoje: NaiveDate) -> Result<Resposta> {
+        let (id, _) = separar_id(resto);
+        let id = id.context("use /devolvido #id")?;
+        let pessoa = self.db.devolver(id, hoje)?;
+        Ok(Resposta::texto(format!("↩ {} devolveu {}.", pessoa, self.db.livro(id)?.title)))
+    }
+
+    fn emprestados(&self, hoje: NaiveDate) -> Result<Resposta> {
+        let lista = self.db.emprestados()?;
+        if lista.is_empty() {
+            return Ok(Resposta::texto("Nenhum livro emprestado. Use /emprestar #3 Maria"));
+        }
+        let mut t = String::from("↗ Emprestados");
+        for b in &lista {
+            if let Some((pessoa, desde)) = &b.emprestado {
+                let dias = plural((hoje - *desde).num_days(), "dia");
+                t += &format!("\n#{} {} — com {pessoa} desde {} ({dias})", b.id, b.title, data_curta(*desde));
+            }
+        }
+        Ok(Resposta::texto(t))
+    }
+
+    /// serie: "/serie #3 Duna 1" define; "/serie #3" tira; "/serie Duna" lista
+    /// os volumes; "/serie" lista as séries.
+    fn serie(&mut self, resto: &str) -> Result<Resposta> {
+        let (id, texto) = separar_id(resto);
+        let Some(id) = id else {
+            if texto.is_empty() {
+                let series = self.db.series()?;
+                if series.is_empty() {
+                    return Ok(Resposta::texto("Nenhuma série ainda. Use /serie #3 Duna 1"));
+                }
+                return Ok(Resposta::texto(format!("📚 Séries\n{}", series.join("\n"))));
+            }
+            let livros = self.db.serie(&texto)?;
+            if livros.is_empty() {
+                bail!("nenhum livro na série {texto}");
+            }
+            let mut t = format!("📚 {}", livros[0].serie);
+            for b in &livros {
+                let vol = if b.volume > 0 { format!("{}. ", b.volume) } else { String::new() };
+                t += &format!("\n{} {vol}#{} {}", b.status.simbolo(), b.id, b.title);
+            }
+            return Ok(Resposta::texto(t));
+        };
+        let mut b = self.alvo(Some(id))?;
+        let (nome, vol) = match texto.rsplit_once(' ') {
+            Some((nome, n)) if n.parse::<i64>().is_ok() => (nome.trim().to_string(), n.parse().unwrap_or(0)),
+            _ if texto.parse::<i64>().is_ok() && !b.serie.is_empty() => (b.serie.clone(), texto.parse().unwrap_or(0)),
+            _ => (texto.trim().to_string(), 0),
+        };
+        b.serie = nome;
+        b.volume = if b.serie.is_empty() { 0 } else { vol.max(0) };
+        self.db.salvar_livro(&b)?;
+        Ok(Resposta::texto(if b.serie.is_empty() {
+            format!("📚 {}: fora de séries", b.title)
+        } else {
+            format!("📚 {}: {}", b.title, volume(&b))
         }))
     }
 
@@ -795,6 +887,31 @@ mod tests {
         assert_eq!(ler_data("15/10", dia(1)), Some(dia(15)));
         assert_eq!(ler_data("15/10/2026", dia(1)), Some(dia(15)));
         assert_eq!(ler_data("amanhã", dia(1)), None);
+    }
+
+    #[test]
+    fn emprestimos_e_series_pelo_bot() {
+        let mut n = nucleo();
+        n.mensagem("/novo Duna | Frank Herbert | 680", dia(1));
+        n.mensagem("/novo O Messias de Duna | Frank Herbert | 300", dia(1));
+        assert!(n.mensagem("/emprestar Maria", dia(1)).texto.starts_with("❌"), "precisa do #id");
+        let r = n.mensagem("/emprestar #1 Maria", dia(2));
+        assert!(r.texto.contains("Duna emprestado para Maria"), "{}", r.texto);
+        assert!(n.mensagem("/emprestar #1 João", dia(3)).texto.contains("já está com Maria"));
+        let r = n.mensagem("/emprestados", dia(5));
+        assert!(r.texto.contains("#1 Duna — com Maria desde 02/10 (3 dias)"), "{}", r.texto);
+        assert!(n.mensagem("/livro #1", dia(5)).texto.contains("emprestado para Maria"));
+        assert!(n.mensagem("/devolvido #1", dia(6)).texto.contains("Maria devolveu Duna"));
+        assert!(n.mensagem("/emprestados", dia(6)).texto.contains("Nenhum"));
+
+        assert!(n.mensagem("/serie #1 Crônicas de Duna 1", dia(6)).texto.contains("Crônicas de Duna, vol. 1"));
+        assert!(n.mensagem("/serie #2 Crônicas de Duna 2", dia(6)).texto.contains("vol. 2"));
+        let r = n.mensagem("/serie crônicas de duna", dia(6));
+        assert!(r.texto.contains("1. #1 Duna") && r.texto.contains("2. #2 O Messias"), "{}", r.texto);
+        let r = n.mensagem("/status #1 lido", dia(7));
+        assert!(r.texto.contains("Próximo da série: #2 O Messias de Duna"), "{}", r.texto);
+        assert_eq!(r.botoes[0][0].1, "lendo:2");
+        assert!(n.mensagem("/serie #2", dia(7)).texto.contains("fora de séries"));
     }
 
     #[test]

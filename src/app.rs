@@ -60,23 +60,26 @@ pub fn rotulo_aba(aba: Option<Status>) -> &'static str {
     aba.map_or("Todos", Status::rotulo)
 }
 
-pub const CAMPOS: [&str; 7] = ["Título", "Autor", "ISBN", "Páginas", "Categorias", "Status", "Resenha"];
-pub const CAMPO_STATUS: usize = 5;
+pub const CAMPOS: [&str; 9] = ["Título", "Autor", "ISBN", "Páginas", "Série", "Volume", "Categorias", "Status", "Resenha"];
+pub const CAMPO_SERIE: usize = 4;
+pub const CAMPO_STATUS: usize = 7;
 
 /// Formulário de livro (novo ou edição).
 pub struct Form {
     pub id: Option<i64>,
-    /// título, autor, ISBN, páginas, categorias, resenha (o status não é texto)
-    entradas: [Input; 6],
+    /// título, autor, ISBN, páginas, série, volume, categorias, resenha (o status não é texto)
+    entradas: [Input; 8],
     pub status: Status,
     pub foco: usize,
     /// categorias já usadas, sugeridas abaixo dos campos
     pub existentes: Vec<String>,
+    /// séries já usadas, sugeridas quando o foco está na série
+    pub series: Vec<String>,
 }
 
 impl Form {
     fn novo(status: Status) -> Self {
-        Form { id: None, entradas: Default::default(), status, foco: 0, existentes: Vec::new() }
+        Form { id: None, entradas: Default::default(), status, foco: 0, existentes: Vec::new(), series: Vec::new() }
     }
 
     fn de_livro(b: &Book) -> Self {
@@ -87,12 +90,15 @@ impl Form {
                 Input::com(&b.author),
                 Input::com(&b.isbn),
                 Input::com(paginas_texto(b.pages)),
+                Input::com(&b.serie),
+                Input::com(paginas_texto(b.volume)),
                 Input::com(b.categorias.join(", ")),
                 Input::com(&b.review),
             ],
             status: b.status,
             foco: 0,
             existentes: Vec::new(),
+            series: Vec::new(),
         }
     }
 
@@ -104,12 +110,15 @@ impl Form {
                 Input::com(&r.author),
                 Input::com(&r.isbn),
                 Input::com(paginas_texto(r.pages)),
+                Input::default(),
+                Input::default(),
                 Input::com(r.categorias.join(", ")),
                 Input::default(),
             ],
             status: Status::Estante,
             foco: 0,
             existentes: Vec::new(),
+            series: Vec::new(),
         }
     }
 
@@ -180,7 +189,7 @@ fn ler_data(s: &str) -> Result<NaiveDate> {
 }
 
 pub enum Modal {
-    Form(Form),
+    Form(Box<Form>),
     Plano(FormPlano),
     Prompt { titulo: String, input: Input, acao: Acao },
     Confirmar { texto: String, acao: Confirmacao },
@@ -191,6 +200,7 @@ pub enum Modal {
 #[derive(Clone, Copy)]
 pub enum Acao {
     Pagina,
+    Emprestar,
     Nota,
     NovaNota(NoteKind),
     Meta,
@@ -203,6 +213,7 @@ pub enum Confirmacao {
     RemoverNota(i64),
     MarcarLido,
     RecalcularPlano,
+    Devolver,
 }
 
 pub struct Aviso {
@@ -234,6 +245,8 @@ pub struct App {
     pub plano: Option<Plano>,
     /// páginas por dia nas últimas duas semanas e a data prevista para terminar
     pub ritmo: Option<(f64, Option<NaiveDate>)>,
+    /// livros da série na biblioteca e quantos já foram lidos
+    pub serie_info: Option<(usize, usize)>,
 
     pub ano: i32,
     pub stats: Option<Estatisticas>,
@@ -280,6 +293,7 @@ impl App {
             nota_sel: 0,
             plano: None,
             ritmo: None,
+            serie_info: None,
             ano: hoje().year(),
             stats: None,
             sequencia: Sequencia::default(),
@@ -310,6 +324,8 @@ impl App {
                     || b.title.to_lowercase().contains(&filtro)
                     || b.author.to_lowercase().contains(&filtro)
                     || b.categorias.iter().any(|c| c.contains(&filtro))
+                    || b.serie.to_lowercase().contains(&filtro)
+                    || b.emprestado.as_ref().is_some_and(|(p, _)| p.to_lowercase().contains(&filtro))
             })
             .collect()
     }
@@ -342,6 +358,12 @@ impl App {
         self.ritmo = match self.db.ritmo(id, hoje())? {
             Some(r) if b.status == Status::Lendo => Some((r, self.db.previsao(&b, hoje())?)),
             _ => None,
+        };
+        self.serie_info = if b.serie.is_empty() {
+            None
+        } else {
+            let s = self.db.serie(&b.serie)?;
+            Some((s.len(), s.iter().filter(|o| o.status == Status::Lido).count()))
         };
         self.livro = Some(b);
         Ok(())
@@ -553,6 +575,10 @@ impl App {
             KeyCode::Char('r') => self.prompt("Nota (0 a 5)", b.rating.to_string(), Acao::Nota),
             KeyCode::Char('n') => self.prompt("Nova nota (p.115 no início marca a página)", "", Acao::NovaNota(NoteKind::Nota)),
             KeyCode::Char('c') => self.prompt("Nova citação (p.115 no início marca a página)", "", Acao::NovaNota(NoteKind::Citacao)),
+            KeyCode::Char('m') => match &b.emprestado {
+                Some((pessoa, _)) => self.confirmar(format!("{pessoa} devolveu o livro?"), Confirmacao::Devolver),
+                None => self.prompt("Emprestar para quem?", "", Acao::Emprestar),
+            },
             KeyCode::Char('x') => {
                 if let Some(id) = self.notas.get(self.nota_sel).map(|n| n.id) {
                     self.confirmar("Remover a nota selecionada?", Confirmacao::RemoverNota(id));
@@ -731,7 +757,8 @@ impl App {
     /// abrir_form mostra o formulário com as categorias já usadas como sugestão.
     fn abrir_form(&mut self, mut f: Form) -> Result<()> {
         f.existentes = self.db.categorias()?.into_iter().map(|(c, _)| c).collect();
-        self.modal = Some(Modal::Form(f));
+        f.series = self.db.series()?;
+        self.modal = Some(Modal::Form(Box::new(f)));
         Ok(())
     }
 
@@ -753,8 +780,13 @@ impl App {
         b.author = texto(1);
         b.isbn = texto(2);
         b.pages = paginas;
-        b.categorias = ler_categorias(&texto(4));
-        b.review = texto(6);
+        b.serie = texto(4);
+        b.volume = match texto(5).as_str() {
+            "" => 0,
+            s => s.parse::<i64>().ok().filter(|v| *v >= 0).context("volume deve ser um número")?,
+        };
+        b.categorias = ler_categorias(&texto(6));
+        b.review = texto(8);
         if b.pages > 0 {
             b.current_page = b.current_page.min(b.pages);
         }
@@ -829,6 +861,12 @@ impl App {
                 self.nota_sel = self.notas.len().saturating_sub(1);
                 self.ok(if kind == NoteKind::Citacao { "Citação salva." } else { "Nota salva." });
             }
+            Acao::Emprestar => {
+                let b = self.livro_atual()?;
+                self.db.emprestar(b.id, valor, hoje())?;
+                self.recarregar_detalhe()?;
+                self.ok(format!("Emprestado para {valor}."));
+            }
             Acao::Meta => {
                 let n: i64 = if valor.is_empty() { 0 } else { valor.parse().context("digite um número de livros")? };
                 self.db.definir_meta(self.ano, n)?;
@@ -852,6 +890,12 @@ impl App {
                 self.recarregar_detalhe()?;
             }
             Confirmacao::MarcarLido => self.mudar_status(Status::Lido)?,
+            Confirmacao::Devolver => {
+                let b = self.livro_atual()?;
+                let pessoa = self.db.devolver(b.id, hoje())?;
+                self.recarregar_detalhe()?;
+                self.ok(format!("{pessoa} devolveu {}.", b.title));
+            }
             Confirmacao::RecalcularPlano => {
                 let b = self.livro_atual()?;
                 let mut p = self.plano.clone().context("este livro não tem plano")?;
@@ -882,7 +926,10 @@ impl App {
         b.mudar_status(novo, hoje());
         self.db.salvar_progresso(&b, hoje())?;
         self.recarregar_detalhe()?;
-        self.ok(format!("Status: {} {}", novo.simbolo(), novo.nome()));
+        match self.db.proximo_da_serie(&b)?.filter(|_| novo == Status::Lido) {
+            Some(p) => self.ok(format!("Lido! Próximo da série: {} (vol. {}, #{}).", p.title, p.volume, p.id)),
+            None => self.ok(format!("Status: {} {}", novo.simbolo(), novo.nome())),
+        }
         Ok(())
     }
 }

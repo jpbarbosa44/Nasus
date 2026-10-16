@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use super::{centro, cores, desenhar_input};
-use crate::app::{CAMPO_STATUS, CAMPOS, CAMPOS_PLANO, Form, FormPlano, Modal};
+use crate::app::{CAMPO_SERIE, CAMPO_STATUS, CAMPOS, CAMPOS_PLANO, Form, FormPlano, Modal};
 use crate::model::{Plano, Status};
 
 fn bloco(titulo: &str) -> Block<'static> {
@@ -113,7 +113,13 @@ fn formulario(f: &mut Frame, form: &Form) {
             None => {}
         }
     }
-    let dica = if form.existentes.is_empty() {
+    let dica = if form.foco == CAMPO_SERIE {
+        if form.series.is_empty() {
+            " série ou coleção, como Duna; o volume vai no campo de baixo".to_string()
+        } else {
+            format!(" séries existentes: {}", form.series.join(", "))
+        }
+    } else if form.existentes.is_empty() {
         " categorias separadas por vírgula: romance, filosofia".to_string()
     } else {
         format!(" categorias existentes: {}", form.existentes.join(", "))

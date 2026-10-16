@@ -91,6 +91,12 @@ pub struct Book {
     pub finished_at: Option<NaiveDate>,
     /// em minúsculas, ordem alfabética
     pub categorias: Vec<String>,
+    /// com quem está e desde quando, se estiver emprestado
+    pub emprestado: Option<(String, NaiveDate)>,
+    /// série ou coleção ("Duna"); vazio quando o livro é avulso
+    pub serie: String,
+    /// número do volume na série; 0 quando não se sabe
+    pub volume: i64,
 }
 
 impl Book {
@@ -108,6 +114,9 @@ impl Book {
             started_at: None,
             finished_at: None,
             categorias: Vec::new(),
+            emprestado: None,
+            serie: String::new(),
+            volume: 0,
         }
     }
 

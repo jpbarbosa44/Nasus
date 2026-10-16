@@ -44,7 +44,10 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     let linhas = livros.iter().map(|b| {
         Row::new(vec![
             Cell::from(Span::styled(b.status.simbolo(), cores::status(b.status))),
-            Cell::from(b.title.clone()),
+            Cell::from(match &b.emprestado {
+                Some(_) => Line::from(vec![Span::raw(b.title.clone()), Span::styled(" ↗", cores::AMAR)]),
+                None => Line::raw(b.title.clone()),
+            }),
             Cell::from(Span::styled(b.author.clone(), cores::APAGADA)),
             Cell::from(Span::styled(b.categorias.join(", "), cores::APAGADA)),
             Cell::from(progresso(b)),

@@ -6,6 +6,7 @@ mod codigo_barras;
 mod dados;
 mod db;
 mod input;
+mod mcp;
 mod model;
 mod openlibrary;
 mod ui;
@@ -25,7 +26,8 @@ const USO: &str = "uso: nasus              abre o app no terminal
      nasus bot ...      bot do Telegram (nasus bot --help)
      nasus exportar     grava a biblioteca em JSON ou CSV
      nasus importar     traz livros de um JSON do Nasus ou do Goodreads
-     nasus restaurar    volta o banco para uma cópia de segurança";
+     nasus restaurar    volta o banco para uma cópia de segurança
+     nasus mcp          servidor MCP para o Claude consultar a biblioteca";
 
 fn main() -> Result<()> {
     let caminho = Db::caminho_padrao()?;
@@ -37,8 +39,9 @@ fn main() -> Result<()> {
         Some("exportar" | "export") => return dados::exportar(&caminho, &args[1..]),
         Some("importar" | "import") => return dados::importar(&caminho, &args[1..]),
         Some("restaurar" | "restore") => return dados::restaurar(&caminho, &args[1..]),
+        Some("mcp") => return mcp::rodar(&caminho, &args[1..]),
         Some("-h" | "--help" | "ajuda") => {
-            println!("{USO}\n\n{}\n\n{}\n\n{}", web::USO, bot::USO, dados::USO);
+            println!("{USO}\n\n{}\n\n{}\n\n{}\n\n{}", web::USO, bot::USO, dados::USO, mcp::USO);
             return Ok(());
         }
         Some(outro) => bail!("comando desconhecido: {outro}\n\n{USO}"),

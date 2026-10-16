@@ -59,7 +59,24 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     if let Some(m) = s.meta.filter(|m| *m > s.lidos) {
         linhas.push(numero("Faltam", format!("{} livros para a meta", m - s.lidos)));
     }
+    let [nums, cats] = Layout::horizontal([Constraint::Min(40), Constraint::Percentage(45)]).areas(nums);
     f.render_widget(Paragraph::new(linhas), nums);
+
+    // categorias mais lidas no ano, com uma barrinha proporcional
+    let mut linhas = vec![Line::styled(" Mais lidas por categoria", cores::APAGADA)];
+    let maior = s.por_categoria.first().map_or(1, |(_, n)| *n).max(1);
+    for (cat, n) in s.por_categoria.iter().take(5) {
+        let barra = "█".repeat(((*n * 12) / maior).max(1) as usize);
+        linhas.push(Line::from(vec![
+            Span::raw(format!(" {cat:<18.18} ")),
+            Span::styled(barra, cores::LIVRO),
+            Span::styled(format!(" {n}"), cores::APAGADA),
+        ]));
+    }
+    if s.por_categoria.is_empty() {
+        linhas.push(Line::styled(" nenhum livro lido com categoria neste ano", cores::APAGADA));
+    }
+    f.render_widget(Paragraph::new(linhas), cats);
 
     let dados: Vec<(&str, u64)> = MESES.iter().copied().zip(s.por_mes).collect();
     let largura_barra = ((grafico.width.saturating_sub(2)) / 12).saturating_sub(1).clamp(1, 6);

@@ -104,7 +104,7 @@ impl Form {
                 Input::com(&r.author),
                 Input::com(&r.isbn),
                 Input::com(paginas_texto(r.pages)),
-                Input::default(),
+                Input::com(r.categorias.join(", ")),
                 Input::default(),
             ],
             status: Status::Estante,

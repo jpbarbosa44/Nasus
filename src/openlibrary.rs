@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 const URL: &str = "https://openlibrary.org/search.json";
-const CAMPOS: &str = "title,author_name,isbn,number_of_pages_median,first_publish_year";
+const CAMPOS: &str = "title,author_name,isbn,number_of_pages_median,first_publish_year,subject";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Resultado {
@@ -15,6 +15,8 @@ pub struct Resultado {
     pub isbn: String,
     pub pages: i64,
     pub ano: Option<i64>,
+    /// categorias sugeridas a partir dos assuntos da Open Library
+    pub categorias: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -31,6 +33,52 @@ struct Doc {
     isbn: Vec<String>,
     number_of_pages_median: Option<i64>,
     first_publish_year: Option<i64>,
+    #[serde(default)]
+    subject: Vec<String>,
+}
+
+/// Assuntos da Open Library (em inglês, às vezes em português) → categoria.
+/// Os mais específicos vêm antes: "science fiction" não pode virar "ciência".
+const ASSUNTOS: &[(&[&str], &str)] = &[
+    (&["science fiction", "ficção científica"], "ficção científica"),
+    (&["fantasy", "fantasia"], "fantasia"),
+    (&["horror", "terror"], "terror"),
+    (&["detective", "mystery", "crime", "policia"], "mistério"),
+    (&["love stories", "romance"], "romance"),
+    (&["juvenile", "young adult", "children", "infanto"], "juvenil"),
+    (&["poetry", "poesia"], "poesia"),
+    (&["biography", "autobiography", "biografia", "memoir"], "biografia"),
+    (&["philosophy", "filosofia"], "filosofia"),
+    (&["psychology", "psicologia"], "psicologia"),
+    (&["self-help", "autoajuda", "self-actualization"], "autoajuda"),
+    (&["economics", "economia"], "economia"),
+    (&["politic", "política"], "política"),
+    (&["religion", "theology", "religião", "christian"], "religião"),
+    (&["history", "história"], "história"),
+    (&["business", "management", "negócios"], "negócios"),
+    (&["classic", "clássico"], "clássico"),
+    (&["science", "ciência"], "ciência"),
+    (&["fiction", "ficção", "novel"], "ficção"),
+];
+
+/// gêneros que já dizem que o livro é ficção, tornando "ficção" redundante
+const GENEROS_DE_FICCAO: [&str; 5] = ["ficção científica", "fantasia", "terror", "mistério", "romance"];
+
+/// categorias_de traduz os assuntos em até 3 categorias, na ordem em que aparecem.
+pub fn categorias_de(assuntos: &[String]) -> Vec<String> {
+    let mut v: Vec<&str> = Vec::new();
+    for a in assuntos {
+        let a = a.to_lowercase();
+        if let Some((_, cat)) = ASSUNTOS.iter().find(|(chaves, _)| chaves.iter().any(|c| a.contains(c)))
+            && !v.contains(cat)
+        {
+            v.push(cat);
+        }
+    }
+    if v.iter().any(|c| GENEROS_DE_FICCAO.contains(c)) {
+        v.retain(|c| *c != "ficção");
+    }
+    v.into_iter().take(3).map(String::from).collect()
 }
 
 /// normalizar_isbn devolve o ISBN sem hífens/espaços quando `q` parece um
@@ -112,6 +160,7 @@ pub fn interpretar_brasilapi(json: &str, isbn: &str) -> Result<Option<Resultado>
         isbn: isbn.to_string(),
         pages: l.page_count.unwrap_or(0),
         ano: l.year,
+        categorias: Vec::new(),
     }))
 }
 
@@ -124,6 +173,7 @@ fn completar(br: Resultado, ol: Option<Resultado>) -> Resultado {
         author: if ol.author.is_empty() { br.author } else { ol.author },
         pages: if br.pages > 0 { br.pages } else { ol.pages },
         ano: br.ano.or(ol.ano),
+        categorias: if br.categorias.is_empty() { ol.categorias } else { br.categorias },
         ..br
     }
 }
@@ -151,6 +201,7 @@ pub fn interpretar(json: &str, isbn_buscado: Option<&str>) -> Result<Vec<Resulta
                 isbn,
                 pages: d.number_of_pages_median.unwrap_or(0),
                 ano: d.first_publish_year,
+                categorias: categorias_de(&d.subject),
             })
         })
         .collect())
@@ -169,11 +220,27 @@ mod tests {
     }
 
     #[test]
+    fn traduz_assuntos_em_categorias() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            categorias_de(&s(&["Dune (Imaginary place)", "Fiction", "Science fiction"])),
+            ["ficção científica"],
+            "o gênero específico dispensa o genérico"
+        );
+        assert_eq!(
+            categorias_de(&s(&["Philosophy", "Stoics", "Ethics", "History of philosophy", "Classic Literature", "Fiction"])),
+            ["filosofia", "clássico", "ficção"],
+            "no máximo 3, sem repetir"
+        );
+        assert!(categorias_de(&s(&["Accessible book", "Protected DAISY"])).is_empty());
+    }
+
+    #[test]
     fn interpreta_resposta() {
         let json = r#"{"numFound": 2, "docs": [
             {"title": "Ensaio sobre a cegueira", "author_name": ["José Saramago"],
              "isbn": ["0156007754", "9789722110947"], "number_of_pages_median": 310,
-             "first_publish_year": 1995},
+             "first_publish_year": 1995, "subject": ["Blindness", "Portuguese fiction", "Fiction, general"]},
             {"author_name": ["Sem título"]},
             {"title": "Anônimo"}
         ]}"#;
@@ -187,6 +254,7 @@ mod tests {
                 isbn: "9789722110947".into(),
                 pages: 310,
                 ano: Some(1995),
+                categorias: vec!["ficção".into()],
             }
         );
         assert_eq!((r[1].author.as_str(), r[1].pages, r[1].ano), ("", 0, None));
@@ -209,10 +277,12 @@ mod tests {
             isbn: "9788532530783".into(),
             pages: 302,
             ano: Some(1997),
+            categorias: vec!["fantasia".into()],
         };
         let r = completar(br.clone(), Some(ol));
         assert_eq!(r.title, "Harry Potter e a pedra filosofal", "título brasileiro fica");
         assert_eq!((r.author.as_str(), r.pages, r.ano), ("J. K. Rowling", 302, Some(1997)));
+        assert_eq!(r.categorias, ["fantasia"], "categorias vêm da Open Library");
         assert_eq!(completar(br.clone(), None), br);
     }
 }

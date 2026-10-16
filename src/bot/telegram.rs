@@ -174,6 +174,10 @@ impl Telegram {
         };
         let teclado = serde_json::to_string(&teclado)?;
         let chat = chat_id.to_string();
+        // a capa é enfeite: se não existir (404), segue só com o texto
+        if let Some(url) = &r.foto {
+            let _ = self.chamar::<IgnoredAny>("sendPhoto", &[("chat_id", chat.as_str()), ("photo", url.as_str())]);
+        }
         for (i, parte) in partes.iter().enumerate() {
             let mut params = vec![("chat_id", chat.as_str()), ("text", parte.as_str())];
             if i + 1 == partes.len() && !r.botoes.is_empty() {

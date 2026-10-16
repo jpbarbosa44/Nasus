@@ -52,11 +52,13 @@ Todo dia às 8h eu mando a meta de leitura do dia e, às 21h, lembro do que aind
 pub struct Resposta {
     pub texto: String,
     pub botoes: Vec<Vec<(String, String)>>,
+    /// URL de uma imagem (a capa) mandada antes do texto
+    pub foto: Option<String>,
 }
 
 impl Resposta {
     fn texto(t: impl Into<String>) -> Self {
-        Resposta { texto: t.into(), botoes: Vec::new() }
+        Resposta { texto: t.into(), botoes: Vec::new(), foto: None }
     }
 }
 
@@ -117,6 +119,11 @@ fn ler_status(s: &str) -> Option<Status> {
 
 fn data_curta(d: NaiveDate) -> String {
     d.format("%d/%m").to_string()
+}
+
+/// capa é a URL da capa na Open Library; `default=false` faz dar 404 quando não há.
+fn capa(b: &Book) -> Option<String> {
+    (!b.isbn.is_empty()).then(|| format!("https://covers.openlibrary.org/b/isbn/{}-M.jpg?default=false", b.isbn))
 }
 
 fn progresso(b: &Book) -> String {
@@ -265,7 +272,7 @@ impl Nucleo {
             let lendo = self.em_andamento()?;
             if lendo.len() > 1 {
                 let acao = if relativo { "rel" } else { "pag" };
-                return Ok(Resposta {
+                return Ok(Resposta { foto: None,
                     texto: if relativo { format!("Mais {n} páginas em qual livro?") } else { format!("Página {n} de qual livro?") },
                     botoes: lendo.iter().map(|b| vec![(b.title.clone(), format!("{acao}:{}:{n}", b.id))]).collect(),
                 });
@@ -342,7 +349,7 @@ impl Nucleo {
             .take(8)
             .map(|b| vec![(format!("▶ Começar: {}", b.title), format!("lendo:{}", b.id))])
             .collect();
-        Ok(Resposta { texto: t, botoes })
+        Ok(Resposta { foto: None, texto: t, botoes })
     }
 
     fn estante(&self) -> Result<Resposta> {
@@ -361,7 +368,7 @@ impl Nucleo {
             .take(8)
             .map(|b| vec![(format!("📋 Quero ler: {}", b.title), format!("fila:{}", b.id))])
             .collect();
-        Ok(Resposta { texto: t, botoes })
+        Ok(Resposta { foto: None, texto: t, botoes })
     }
 
     fn detalhe(&self, b: &Book, hoje: NaiveDate) -> Result<Resposta> {
@@ -395,7 +402,7 @@ impl Nucleo {
             };
             t += &format!("\n{pagina}{corpo}");
         }
-        Ok(Resposta::texto(t))
+        Ok(Resposta { foto: capa(b), ..Resposta::texto(t) })
     }
 
     fn buscar(&mut self, q: &str) -> Result<Resposta> {
@@ -423,12 +430,12 @@ impl Nucleo {
         }
         let botoes =
             vec![(0..self.resultados.len()).map(|i| (format!("➕ {}", i + 1), format!("add:{i}"))).collect()];
-        Ok(Resposta { texto: t, botoes })
+        Ok(Resposta { foto: None, texto: t, botoes })
     }
 
     /// ja_tenho avisa quando o ISBN já está na biblioteca.
     fn ja_tenho(&self, isbn: &str) -> Result<Option<Resposta>> {
-        Ok(self.db.livro_por_isbn(isbn)?.map(|b| Resposta {
+        Ok(self.db.livro_por_isbn(isbn)?.map(|b| Resposta { foto: None,
             texto: format!("📚 Já está na sua biblioteca: #{} {} ({})", b.id, b.title, b.status.nome()),
             botoes: vec![vec![("Ver o livro".into(), format!("livro:{}", b.id))]],
         }))
@@ -447,7 +454,7 @@ impl Nucleo {
         match achados.len() {
             0 => bail!("não achei “{titulo}” na sua biblioteca"),
             1 => self.detalhe(&achados.remove(0), hoje),
-            n => Ok(Resposta {
+            n => Ok(Resposta { foto: None,
                 texto: format!("{n} livros com “{titulo}”. Qual?"),
                 botoes: achados
                     .iter()
@@ -498,7 +505,7 @@ impl Nucleo {
         // sem #id não há "livro atual" aqui: remover é sério demais para adivinhar
         let id = separar_id(resto).0.context("use /remover #id (veja o número em /livro)")?;
         let b = self.db.livro(id).map_err(|_| anyhow::anyhow!("não achei o livro #{id}"))?;
-        Ok(Resposta {
+        Ok(Resposta { foto: None,
             texto: format!("Remover “{}” e todas as suas notas? Não dá para desfazer.", b.title),
             botoes: vec![vec![("🗑 Remover".into(), format!("rm:{id}")), ("Cancelar".into(), "x".into())]],
         })
@@ -509,7 +516,14 @@ impl Nucleo {
         if let Some(resp) = self.ja_tenho(&r.isbn)? {
             return Ok(resp);
         }
-        let mut b = Book { title: r.title, author: r.author, isbn: r.isbn, pages: r.pages, ..Book::novo() };
+        let mut b = Book {
+            title: r.title,
+            author: r.author,
+            isbn: r.isbn,
+            pages: r.pages,
+            categorias: r.categorias,
+            ..Book::novo()
+        };
         b.mudar_status(Status::Estante, hoje);
         self.inserir(b)
     }
@@ -517,8 +531,14 @@ impl Nucleo {
     fn inserir(&mut self, b: Book) -> Result<Resposta> {
         let id = self.db.inserir_livro(&b)?;
         let paginas = if b.pages > 0 { format!(" ({} páginas)", b.pages) } else { String::new() };
+        let categorias = if b.categorias.is_empty() {
+            format!("Para pôr categorias: /categoria #{id} romance, filosofia")
+        } else {
+            format!("🏷 {} (troque com /categoria #{id} …)", b.categorias.join(" · "))
+        };
         Ok(Resposta {
-            texto: format!("➕ Na estante: #{id} {}{paginas}\nPara pôr categorias: /categoria #{id} romance, filosofia", b.title),
+            foto: capa(&b),
+            texto: format!("➕ Na estante: #{id} {}{paginas}\n{categorias}", b.title),
             botoes: vec![vec![
                 ("📋 Quero ler".into(), format!("fila:{id}")),
                 ("▶ Começar a ler".into(), format!("lendo:{id}")),
@@ -669,6 +689,10 @@ impl Nucleo {
         if let Some(n) = e.nota_media {
             t += &format!("\nNota média: {}", format!("{n:.1}").replace('.', ","));
         }
+        if !e.por_categoria.is_empty() {
+            let mais: Vec<String> = e.por_categoria.iter().take(3).map(|(c, n)| format!("{c} ({n})")).collect();
+            t += &format!("\nMais lidas: {}", mais.join(", "));
+        }
         Ok(Resposta::texto(t))
     }
 
@@ -729,7 +753,14 @@ mod tests {
     }
 
     fn busca_falsa(q: &str) -> Result<Vec<Resultado>> {
-        Ok(vec![Resultado { title: format!("{q} (resultado)"), author: "Autor".into(), isbn: String::new(), pages: 300, ano: Some(2000) }])
+        Ok(vec![Resultado {
+            title: format!("{q} (resultado)"),
+            author: "Autor".into(),
+            isbn: String::new(),
+            pages: 300,
+            ano: Some(2000),
+            categorias: vec!["ficção".into()],
+        }])
     }
 
     fn nucleo() -> Nucleo {
@@ -811,6 +842,8 @@ mod tests {
         assert!(!Nucleo::fecha_teclado("add:0"));
         let r = n.callback("add:0", dia(1));
         assert!(r.texto.contains("#1 duna (resultado) (300 páginas)"), "{}", r.texto);
+        assert!(r.texto.contains("🏷 ficção"), "categorias sugeridas: {}", r.texto);
+        assert_eq!(r.foto, None, "sem ISBN, sem capa");
         assert!(n.callback("add:9", dia(1)).texto.contains("expirou"));
 
         assert!(n.mensagem("/fila", dia(1)).texto.contains("vazia"), "livro novo vai para a estante");
@@ -847,6 +880,10 @@ mod tests {
         assert!(r.texto.contains("Já está"), "foto avisa antes de buscar: {}", r.texto);
 
         assert!(n.mensagem("/paginas #1 320", dia(1)).texto.contains("320 páginas"));
+        assert_eq!(
+            n.mensagem("/livro #1", dia(1)).foto.as_deref(),
+            Some("https://covers.openlibrary.org/b/isbn/9788535914849-M.jpg?default=false")
+        );
         assert_eq!(n.db.livro(1).unwrap().pages, 320);
 
         n.mensagem("/novo Outro livro | | 100", dia(1));

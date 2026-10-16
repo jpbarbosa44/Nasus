@@ -190,7 +190,7 @@ fn tratar_mensagem(tg: &Telegram, cfg: &Config, nucleo: &mut Nucleo, m: Mensagem
         let texto = format!(
             "Este bot ainda não está pareado. Seu chat id é {chat}.\nSe este Nasus é seu, rode: nasus bot --chat {chat}"
         );
-        enviar(tg, chat, &Resposta { texto, botoes: Vec::new() });
+        enviar(tg, chat, &Resposta { foto: None, texto, botoes: Vec::new() });
         return;
     }
     if chat != cfg.chat_id {
@@ -203,7 +203,7 @@ fn tratar_mensagem(tg: &Telegram, cfg: &Config, nucleo: &mut Nucleo, m: Mensagem
             Ok(bytes) => nucleo.foto(&bytes),
             Err(e) => {
                 eprintln!("aviso: baixando foto: {e:#}");
-                Resposta { texto: "❌ não consegui baixar a foto; tente de novo".into(), botoes: Vec::new() }
+                Resposta { foto: None, texto: "❌ não consegui baixar a foto; tente de novo".into(), botoes: Vec::new() }
             }
         }
     } else if let Some(texto) = m.text {

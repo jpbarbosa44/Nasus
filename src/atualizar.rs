@@ -171,15 +171,33 @@ pub fn atualizar(caminho_db: &Path, args: &[String]) -> Result<()> {
         println!("✔ {} atualizado.", alvo.display());
     }
     println!("Nasus {} instalado. Novidades: {}", rel.tag_name, rel.html_url);
-    if cfg!(target_os = "linux")
-        && std::process::Command::new("systemctl")
-            .args(["--user", "is-active", "--quiet", "nasus-bot"])
-            .status()
-            .is_ok_and(|s| s.success())
-    {
+    if cfg!(target_os = "linux") && bot_usa(&exe) {
         println!("O bot está rodando com a versão antiga: systemctl --user restart nasus-bot");
     }
     Ok(())
+}
+
+/// bot_usa diz se o serviço nasus-bot está ativo e roda este mesmo binário.
+fn bot_usa(exe: &Path) -> bool {
+    let ativo = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", "nasus-bot"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ativo {
+        return false;
+    }
+    let Ok(saida) = std::process::Command::new("systemctl").args(["--user", "show", "-p", "ExecStart", "--value", "nasus-bot"]).output()
+    else {
+        return false;
+    };
+    caminho_exec_start(&String::from_utf8_lossy(&saida.stdout))
+        .is_some_and(|p| Path::new(p).canonicalize().is_ok_and(|p| p == exe))
+}
+
+/// caminho_exec_start tira o binário de "{ path=/x/nasus ; argv[]=... }".
+fn caminho_exec_start(s: &str) -> Option<&str> {
+    let resto = s.split("path=").nth(1)?;
+    Some(resto.split(" ;").next()?.trim()).filter(|p| !p.is_empty())
 }
 
 // --- aviso de versão nova ---
@@ -237,6 +255,13 @@ pub fn mostrar_versao() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exec_start_do_systemd() {
+        let s = "{ path=/home/x/.cargo/bin/nasus ; argv[]=/home/x/.cargo/bin/nasus bot ; ignore_errors=no }\n";
+        assert_eq!(caminho_exec_start(s), Some("/home/x/.cargo/bin/nasus"));
+        assert_eq!(caminho_exec_start(""), None);
+    }
 
     #[test]
     fn compara_versoes() {

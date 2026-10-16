@@ -22,7 +22,8 @@ Consultar:
 /lendo — livros em andamento e o plano de hoje
 /estante — livros que você tem
 /fila — livros que você quer ler (a seguir)
-/livro #3 — detalhes de um livro
+/livro #3 — detalhes de um livro (ou /livro duna, pelo título)
+/notas #3 — todas as notas e citações do livro
 /meta — meta de livros do ano (/meta 12 define)
 
 Organizar:
@@ -30,6 +31,8 @@ Organizar:
 📷 foto do código de barras do livro — eu leio o ISBN e busco
 /novo Título | Autor | páginas — adiciona à mão
 /status #3 lendo — estante, fila, lendo, lido ou abandonado
+/paginas #3 320 — corrige o total de páginas
+/remover #3 — remove o livro (/remover nota 12 remove uma nota)
 /categoria #3 romance, filosofia — categorias do livro (/categorias lista todas)
 /avaliar #3 5 — nota de 0 a 5
 /nota texto — anota algo no livro atual (/nota #3 texto)
@@ -154,6 +157,9 @@ impl Nucleo {
                  (mandar como arquivo evita a compressão) — ou mande o número com /buscar 978…",
             ));
         };
+        if let Some(r) = self.ja_tenho(&isbn)? {
+            return Ok(r);
+        }
         let mut r = self.buscar(&isbn)?;
         r.texto = format!("📷 ISBN {isbn}\n{}", r.texto);
         Ok(r)
@@ -180,10 +186,10 @@ impl Nucleo {
                 "lendo" => self.lendo(hoje),
                 "estante" => self.estante(),
                 "fila" => self.fila(),
-                "livro" => {
-                    let b = self.alvo(separar_id(resto).0)?;
-                    self.detalhe(&b, hoje)
-                }
+                "livro" => self.livro(resto, hoje),
+                "notas" => self.notas(resto),
+                "paginas" | "páginas" => self.paginas(resto),
+                "remover" => self.remover(resto),
                 "buscar" => self.buscar(resto),
                 "novo" => self.novo(resto, hoje),
                 "status" => self.status(resto, hoje),
@@ -223,6 +229,15 @@ impl Nucleo {
             ("lendo", Some(id), _) => self.mudar_status(id, Status::Lendo, hoje),
             ("fila", Some(id), _) => self.mudar_status(id, Status::QueroLer, hoje),
             ("add", Some(i), _) => self.adicionar(i as usize, hoje),
+            ("livro", Some(id), _) => {
+                let b = self.db.livro(id)?;
+                self.detalhe(&b, hoje)
+            }
+            ("rm", Some(id), _) => {
+                let b = self.db.livro(id)?;
+                self.db.remover_livro(id)?;
+                Ok(Resposta::texto(format!("🗑 {} removido, com suas notas.", b.title)))
+            }
             ("x", ..) => Ok(Resposta::texto("👍")),
             _ => bail!("botão desconhecido"),
         }
@@ -369,6 +384,9 @@ impl Nucleo {
             t += &format!("\n{}", descricao_plano(b, &p, hoje));
         }
         let notas = self.db.notas(b.id)?;
+        if notas.len() > 3 {
+            t += &format!("\n({} notas; /notas #{} mostra todas)", notas.len(), b.id);
+        }
         for n in notas.iter().rev().take(3) {
             let pagina = n.page.map_or(String::new(), |p| format!("p. {p} "));
             let corpo = match n.kind {
@@ -408,8 +426,89 @@ impl Nucleo {
         Ok(Resposta { texto: t, botoes })
     }
 
+    /// ja_tenho avisa quando o ISBN já está na biblioteca.
+    fn ja_tenho(&self, isbn: &str) -> Result<Option<Resposta>> {
+        Ok(self.db.livro_por_isbn(isbn)?.map(|b| Resposta {
+            texto: format!("📚 Já está na sua biblioteca: #{} {} ({})", b.id, b.title, b.status.nome()),
+            botoes: vec![vec![("Ver o livro".into(), format!("livro:{}", b.id))]],
+        }))
+    }
+
+    /// livro mostra um livro pelo #id ou procurando pelo título.
+    fn livro(&mut self, resto: &str, hoje: NaiveDate) -> Result<Resposta> {
+        let (id, titulo) = separar_id(resto);
+        if id.is_some() || titulo.is_empty() {
+            let b = self.alvo(id)?;
+            return self.detalhe(&b, hoje);
+        }
+        let busca = titulo.to_lowercase();
+        let mut achados: Vec<Book> =
+            self.db.livros()?.into_iter().filter(|b| b.title.to_lowercase().contains(&busca)).collect();
+        match achados.len() {
+            0 => bail!("não achei “{titulo}” na sua biblioteca"),
+            1 => self.detalhe(&achados.remove(0), hoje),
+            n => Ok(Resposta {
+                texto: format!("{n} livros com “{titulo}”. Qual?"),
+                botoes: achados
+                    .iter()
+                    .take(8)
+                    .map(|b| vec![(format!("{} {}", b.status.simbolo(), b.title), format!("livro:{}", b.id))])
+                    .collect(),
+            }),
+        }
+    }
+
+    fn notas(&self, resto: &str) -> Result<Resposta> {
+        let b = self.alvo(separar_id(resto).0)?;
+        let notas = self.db.notas(b.id)?;
+        if notas.is_empty() {
+            return Ok(Resposta::texto(format!("{} ainda não tem notas. Use /nota ou /citacao.", b.title)));
+        }
+        let mut t = format!("📝 {} — {}", b.title, plural(notas.len() as i64, "nota"));
+        for n in &notas {
+            let pagina = n.page.map_or(String::new(), |p| format!("p. {p} "));
+            let corpo = match n.kind {
+                NoteKind::Nota => format!("• {}", n.body),
+                NoteKind::Citacao => format!("“{}”", n.body),
+            };
+            t += &format!("\n\n[{}] {pagina}{corpo}", n.id);
+        }
+        t += "\n\nPara apagar: /remover nota <número>";
+        Ok(Resposta::texto(t))
+    }
+
+    fn paginas(&mut self, resto: &str) -> Result<Resposta> {
+        let (id, n) = separar_id(resto);
+        let n: i64 = n.parse().ok().filter(|n| *n >= 0).context("use /paginas #id <total de páginas>")?;
+        let mut b = self.alvo(id)?;
+        b.pages = n;
+        if n > 0 {
+            b.current_page = b.current_page.min(n);
+        }
+        self.db.salvar_livro(&b)?;
+        Ok(Resposta::texto(format!("📏 {}: {}\n{}", b.title, plural(n, "página"), progresso(&b))))
+    }
+
+    fn remover(&mut self, resto: &str) -> Result<Resposta> {
+        if let Some(n) = resto.strip_prefix("nota") {
+            let id: i64 = n.trim().trim_start_matches('#').parse().context("use /remover nota <número> (veja /notas)")?;
+            self.db.remover_nota(id)?;
+            return Ok(Resposta::texto("🗑 Nota removida."));
+        }
+        // sem #id não há "livro atual" aqui: remover é sério demais para adivinhar
+        let id = separar_id(resto).0.context("use /remover #id (veja o número em /livro)")?;
+        let b = self.db.livro(id).map_err(|_| anyhow::anyhow!("não achei o livro #{id}"))?;
+        Ok(Resposta {
+            texto: format!("Remover “{}” e todas as suas notas? Não dá para desfazer.", b.title),
+            botoes: vec![vec![("🗑 Remover".into(), format!("rm:{id}")), ("Cancelar".into(), "x".into())]],
+        })
+    }
+
     fn adicionar(&mut self, i: usize, hoje: NaiveDate) -> Result<Resposta> {
         let r = self.resultados.get(i).cloned().context("essa busca expirou; busque de novo")?;
+        if let Some(resp) = self.ja_tenho(&r.isbn)? {
+            return Ok(resp);
+        }
         let mut b = Book { title: r.title, author: r.author, isbn: r.isbn, pages: r.pages, ..Book::novo() };
         b.mudar_status(Status::Estante, hoje);
         self.inserir(b)
@@ -733,6 +832,46 @@ mod tests {
         assert!(n.mensagem("/lendo", dia(1)).texto.contains("#1 duna"));
         assert!(n.mensagem("/xyz", dia(1)).texto.contains("desconhecido"));
         assert!(n.mensagem("/start@nasus_bot", dia(1)).texto.starts_with("📚 Nasus"));
+    }
+
+    #[test]
+    fn duplicados_paginas_notas_e_remocao() {
+        let mut n = nucleo();
+        n.mensagem("/buscar 9788535914849", dia(1));
+        n.resultados[0].isbn = "9788535914849".into();
+        assert!(n.callback("add:0", dia(1)).texto.contains("Na estante: #1"));
+        let r = n.callback("add:0", dia(1));
+        assert!(r.texto.contains("Já está na sua biblioteca: #1"), "{}", r.texto);
+        assert_eq!(n.db.livros().unwrap().len(), 1);
+        let r = n.foto(&codigo_barras::png_de_teste("9788535914849"));
+        assert!(r.texto.contains("Já está"), "foto avisa antes de buscar: {}", r.texto);
+
+        assert!(n.mensagem("/paginas #1 320", dia(1)).texto.contains("320 páginas"));
+        assert_eq!(n.db.livro(1).unwrap().pages, 320);
+
+        n.mensagem("/novo Outro livro | | 100", dia(1));
+        n.mensagem("/novo Mais um livro | | 100", dia(1));
+        assert!(n.mensagem("/livro outro", dia(1)).texto.contains("#2 Outro livro"));
+        let r = n.mensagem("/livro livro", dia(1));
+        assert_eq!(r.botoes.len(), 2, "{}", r.texto);
+        assert!(n.callback(&r.botoes[0][0].1, dia(1)).texto.contains("livro"));
+        assert!(n.mensagem("/livro inexistente", dia(1)).texto.starts_with("❌"));
+
+        for i in 0..4 {
+            n.mensagem(&format!("/nota #2 p.{} nota {i}", i + 1), dia(1));
+        }
+        assert!(n.mensagem("/livro #2", dia(1)).texto.contains("/notas #2 mostra todas"));
+        let r = n.mensagem("/notas #2", dia(1));
+        assert!(r.texto.contains("[1] p. 1 • nota 0") && r.texto.contains("[4] p. 4 • nota 3"), "{}", r.texto);
+        assert!(n.mensagem("/remover nota 1", dia(1)).texto.contains("removida"));
+        assert!(n.mensagem("/remover nota 1", dia(1)).texto.starts_with("❌"));
+
+        assert!(n.mensagem("/remover", dia(1)).texto.starts_with("❌"), "sem #id não remove");
+        let r = n.mensagem("/remover #2", dia(1));
+        assert_eq!(r.botoes[0][0].1, "rm:2");
+        assert!(n.callback("rm:2", dia(1)).texto.contains("removido"));
+        assert!(n.db.livro(2).is_err());
+        assert!(n.db.notas(2).unwrap().is_empty());
     }
 
     #[test]

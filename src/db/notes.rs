@@ -34,7 +34,9 @@ impl Db {
     }
 
     pub fn remover_nota(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
+        if self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
+            anyhow::bail!("nota {id} não encontrada");
+        }
         Ok(())
     }
 }

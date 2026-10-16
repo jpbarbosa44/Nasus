@@ -71,10 +71,13 @@ O bot só responde ao chat autorizado. Pelo celular:
 | Mensagem | O que faz |
 |---|---|
 | `120` / `+25` | registra a página atual / soma páginas lidas |
-| `/lendo`, `/estante`, `/fila`, `/livro #3` | consulta os livros |
+| `/lendo`, `/estante`, `/fila`, `/livro #3` | consulta os livros (`/livro duna` procura pelo título) |
+| `/notas #3` | todas as notas e citações do livro |
 | `/buscar duna` | busca e põe na estante com um toque |
 | 📷 foto do código de barras | lê o ISBN da contracapa e busca o livro |
 | `/categoria #3 romance, filosofia` | define as categorias do livro (`/categorias` lista todas) |
+| `/paginas #3 320` | corrige o total de páginas |
+| `/remover #3`, `/remover nota 12` | remove um livro (pede confirmação) ou uma nota |
 | `/plano 25` | plano de 25 páginas por dia a partir de hoje |
 | `/nota texto`, `/citacao p.115 texto` | anota no livro atual (p.115 marca a página; sem ela, vale a atual) |
 | `/meta 12` | define a meta de livros do ano |

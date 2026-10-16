@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::Db;
 use crate::model::{Book, Status, ler_categorias};
@@ -42,6 +42,22 @@ impl Db {
         self.conn
             .query_row(&format!("SELECT {COLUNAS} FROM books WHERE id = ?1"), [id], de_linha)
             .with_context(|| format!("livro {id} não encontrado"))
+    }
+
+    /// livro_por_isbn acha o livro com esse ISBN (ignorando hífens e espaços).
+    pub fn livro_por_isbn(&self, isbn: &str) -> Result<Option<Book>> {
+        let isbn: String = isbn.chars().filter(|c| !matches!(c, '-' | ' ')).collect::<String>().to_uppercase();
+        if isbn.is_empty() {
+            return Ok(None);
+        }
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {COLUNAS} FROM books WHERE upper(replace(replace(isbn, '-', ''), ' ', '')) = ?1 LIMIT 1"),
+                [isbn],
+                de_linha,
+            )
+            .optional()?)
     }
 
     pub fn inserir_livro(&self, b: &Book) -> Result<i64> {
@@ -119,6 +135,12 @@ mod tests {
         b.rating = 4;
         db.salvar_livro(&b).unwrap();
         assert_eq!(db.livro(b.id).unwrap(), b);
+
+        b.isbn = "978-85-359-1484-9".into();
+        db.salvar_livro(&b).unwrap();
+        assert_eq!(db.livro_por_isbn("9788535914849").unwrap().map(|l| l.id), Some(b.id));
+        assert_eq!(db.livro_por_isbn("9780000000000").unwrap(), None);
+        assert_eq!(db.livro_por_isbn("").unwrap(), None);
 
         db.remover_livro(b.id).unwrap();
         assert!(db.livro(b.id).is_err());

@@ -737,6 +737,11 @@ impl App {
         if b.pages > 0 {
             b.current_page = b.current_page.min(b.pages);
         }
+        if let Some(outro) = self.db.livro_por_isbn(&b.isbn)?
+            && Some(outro.id) != f.id
+        {
+            bail!("esse ISBN já é de #{} {}", outro.id, outro.title);
+        }
         if f.id.is_none() || b.status != f.status {
             b.mudar_status(f.status, hoje());
         }

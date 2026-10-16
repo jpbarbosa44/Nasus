@@ -285,7 +285,7 @@ impl Nucleo {
 
     fn registrar(&mut self, mut b: Book, pagina: i64, hoje: NaiveDate) -> Result<Resposta> {
         let chegou_ao_fim = b.registrar_pagina(pagina, hoje);
-        self.db.salvar_livro(&b)?;
+        self.db.salvar_progresso(&b, hoje)?;
         let mut r = Resposta::texto(format!("📖 {}\n{}", b.title, progresso(&b)));
         if let Some(p) = self.db.plano(b.id)? {
             r.texto += &format!("\n{}", p.situacao(&b, hoje).texto());
@@ -303,7 +303,7 @@ impl Nucleo {
     fn mudar_status(&mut self, id: i64, novo: Status, hoje: NaiveDate) -> Result<Resposta> {
         let mut b = self.db.livro(id)?;
         b.mudar_status(novo, hoje);
-        self.db.salvar_livro(&b)?;
+        self.db.salvar_progresso(&b, hoje)?;
         let extra = match novo {
             Status::Lido => {
                 let e = self.db.estatisticas(hoje.year())?;
@@ -325,10 +325,16 @@ impl Nucleo {
             return Ok(Resposta::texto("Nenhum livro em andamento. Veja a /fila ou use /buscar."));
         }
         let mut t = String::from("📚 Lendo agora");
+        let s = self.db.sequencia(hoje)?;
+        if s.atual > 0 {
+            t += &format!(" · 🔥 {} seguidos", plural(s.atual, "dia"));
+        }
         for b in &lendo {
             t += &format!("\n\n#{} {}\n   {}", b.id, b.title, progresso(b));
             if let Some(p) = self.db.plano(b.id)? {
                 t += &format!("\n   {}", descricao_plano(b, &p, hoje).replace('\n', "\n   "));
+            } else if let Some(fim) = self.db.previsao(b, hoje)? {
+                t += &format!("\n   no seu ritmo, termina em {}", fim.format("%d/%m"));
             }
         }
         Ok(Resposta::texto(t))
@@ -728,9 +734,15 @@ impl Nucleo {
     }
 
     /// lembrete_noite avisa os planos com páginas faltando hoje, com um botão
-    /// para registrar a meta cumprida de uma vez.
+    /// para registrar a meta cumprida de uma vez, e a sequência de dias que
+    /// se perde se hoje passar sem leitura.
     pub fn lembrete_noite(&self, hoje: NaiveDate) -> Result<Option<Resposta>> {
+        let s = self.db.sequencia(hoje)?;
+        let em_risco = s.atual > 0 && !s.leu_hoje;
         let mut r = Resposta::texto("🌙 Ainda dá tempo hoje:");
+        if em_risco {
+            r.texto += &format!("\n🔥 não perca a sequência de {} — leia nem que seja uma página", plural(s.atual, "dia"));
+        }
         for (b, p) in self.planos_ativos(hoje)? {
             let faltam = match p.situacao(&b, hoje) {
                 Situacao::FaltamHoje(n) | Situacao::Atrasado { para_hoje: n, .. } => n,
@@ -740,7 +752,7 @@ impl Nucleo {
             r.texto += &format!("\n\n{}\nfaltam {} (até a pág. {meta})", b.title, plural(faltam, "página"));
             r.botoes.push(vec![(format!("✔ Li até a pág. {meta}: {}", b.title), format!("pag:{}:{meta}", b.id))]);
         }
-        Ok((!r.botoes.is_empty()).then_some(r))
+        Ok((em_risco || !r.botoes.is_empty()).then_some(r))
     }
 }
 
@@ -779,6 +791,20 @@ mod tests {
         assert_eq!(ler_data("15/10", dia(1)), Some(dia(15)));
         assert_eq!(ler_data("15/10/2026", dia(1)), Some(dia(15)));
         assert_eq!(ler_data("amanhã", dia(1)), None);
+    }
+
+    #[test]
+    fn sequencia_no_lendo_e_aviso_a_noite() {
+        let mut n = nucleo();
+        n.mensagem("/novo Livro | Autor | 300", dia(1));
+        n.mensagem("/status #1 lendo", dia(1));
+        n.mensagem("20", dia(1));
+        n.mensagem("40", dia(2));
+        assert!(n.mensagem("/lendo", dia(2)).texto.contains("🔥 2 dias seguidos"));
+        assert!(n.mensagem("/lendo", dia(2)).texto.contains("no seu ritmo, termina em"), "sem plano, mostra a previsão");
+        assert!(n.lembrete_noite(dia(2)).unwrap().is_none(), "já leu hoje e não tem plano");
+        let r = n.lembrete_noite(dia(3)).unwrap().expect("sequência em risco");
+        assert!(r.texto.contains("não perca a sequência de 2 dias"), "{}", r.texto);
     }
 
     #[test]

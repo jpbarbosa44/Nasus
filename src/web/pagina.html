@@ -172,6 +172,14 @@
     .nova-nota { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; margin-top: 12px; align-items: start; }
     .nova-nota select { width: auto; }
 
+    .calor { display: grid; grid-template-rows: repeat(7, 11px); grid-auto-flow: column; grid-auto-columns: 11px; gap: 3px; overflow-x: auto; padding: 10px 0 4px; }
+    .calor i { border-radius: 2px; background: var(--borda); }
+    .calor i.vazio { background: none; }
+    .calor i.n1 { background: color-mix(in srgb, var(--cy) 30%, var(--borda)); }
+    .calor i.n2 { background: color-mix(in srgb, var(--cy) 55%, var(--borda)); }
+    .calor i.n3 { background: color-mix(in srgb, var(--cy) 80%, var(--borda)); }
+    .calor i.n4 { background: var(--cy); }
+    .ritmo { color: var(--cy); }
     .plano-linha { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
     .plano-linha > div { width: 150px; }
     .situacao { margin-top: 8px; }
@@ -419,7 +427,7 @@
     }
 
     function telaDetalhe() {
-      const { livro: b, notas, plano } = e.detalhe;
+      const { livro: b, notas, plano, ritmo } = e.detalhe;
       const st = statusDe(b.status);
       const capa = b.isbn ? `<img src="${capaUrl(b.isbn)}" alt="" onerror="this.replaceWith('📕')">` : "";
       const paginas = b.paginas ? `${b.pagina_atual} de ${b.paginas}` : b.pagina_atual ? `${b.pagina_atual} (total desconhecido)` : "—";
@@ -453,6 +461,7 @@
               <dt>Período</dt><dd>${b.inicio || "—"} → ${b.fim || "—"}</dd>
               <dt>Nota</dt><dd class="estrelas-btn">${estr}</dd>
               <dt>Categorias</dt><dd>${b.categorias.length ? esc(b.categorias.join(" · ")) : `<span class="dim">— (e para pôr)</span>`}</dd>
+              ${ritmo ? `<dt>Ritmo</dt><dd class="ritmo">${ritmo.paginas_dia} pág/dia${ritmo.fim ? ` · no seu ritmo, termina em ${ritmo.fim}` : ""}</dd>` : ""}
             </dl>
             <div style="margin-bottom:12px">${barra(b.progresso)}</div>
             <form class="pagina-form" id="form-pagina">
@@ -475,6 +484,30 @@
           <textarea id="texto-nota" rows="2" placeholder="p.115 no começo marca a página; sem isso, vale a atual"></textarea>
           <button class="btn prim">Salvar</button>
         </form>`;
+    }
+
+    // mapaCalor desenha as páginas por dia do último ano, uma coluna por semana
+    function mapaCalor(l) {
+      const porDia = new Map(l.dias);
+      const maior = Math.max(1, ...l.dias.map((d) => d[1]));
+      const dia = (s) => new Date(s + "T12:00:00");
+      const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const desde = dia(l.desde), hoje = dia(l.hoje);
+      const d = new Date(desde);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // volta até a segunda-feira
+      let cels = "";
+      for (; d <= hoje; d.setDate(d.getDate() + 1)) {
+        if (d < desde) { cels += `<i class="vazio"></i>`; continue; }
+        const n = porDia.get(iso(d)) || 0;
+        const nivel = n ? 1 + Math.min(3, Math.floor((n * 4) / (maior + 1))) : 0;
+        cels += `<i class="n${nivel}" title="${d.toLocaleDateString("pt-BR")}: ${plural(n, "página")}"></i>`;
+      }
+      const s = l.sequencia;
+      const seq = s.atual
+        ? `🔥 <b>${plural(s.atual, "dia")}</b> seguidos${s.leu_hoje ? "" : ` <span style="color:var(--amar)">· leia hoje para não perder</span>`}`
+        : `<span class="dim">nenhuma sequência agora</span>`;
+      return `<div class="seq">${seq} <span class="dim">· recorde ${plural(s.recorde, "dia")} · ${l.total.toLocaleString("pt-BR")} páginas no período</span></div>
+        <div class="calor">${cels}</div>`;
     }
 
     function telaStats() {
@@ -505,6 +538,8 @@
           <div class="painel"><b>${media}</b><span>nota média</span></div>
           <div class="painel"><b>${s.lendo}</b><span>lendo agora</span></div>
         </div>
+        <h2>Leitura no último ano</h2>
+        <div class="painel">${mapaCalor(s.leitura)}</div>
         <h2>Livros terminados por mês</h2>
         <div class="painel"><div class="meses">${meses}</div></div>
         <h2>Mais lidas por categoria</h2>

@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local, NaiveDate};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::db::{Db, Estatisticas};
+use crate::db::{Db, Estatisticas, Sequencia};
 use crate::input::Input;
 use crate::model::{Book, Note, NoteKind, Plano, Status, ler_categorias, separar_pagina};
 use crate::openlibrary::{self, Resultado};
@@ -232,9 +232,14 @@ pub struct App {
     pub notas: Vec<Note>,
     pub nota_sel: usize,
     pub plano: Option<Plano>,
+    /// páginas por dia nas últimas duas semanas e a data prevista para terminar
+    pub ritmo: Option<(f64, Option<NaiveDate>)>,
 
     pub ano: i32,
     pub stats: Option<Estatisticas>,
+    pub sequencia: Sequencia,
+    /// páginas lidas por dia, para o mapa de calor
+    pub leitura_dias: Vec<(NaiveDate, i64)>,
 
     pub busca: Input,
     pub resultados: Vec<Resultado>,
@@ -247,6 +252,9 @@ pub struct App {
     pub modal: Option<Modal>,
     pub aviso: Option<Aviso>,
 }
+
+/// dias cobertos pelo mapa de calor das estatísticas (26 semanas)
+pub const DIAS_MAPA: u64 = 182;
 
 fn hoje() -> NaiveDate {
     Local::now().date_naive()
@@ -271,8 +279,11 @@ impl App {
             notas: Vec::new(),
             nota_sel: 0,
             plano: None,
+            ritmo: None,
             ano: hoje().year(),
             stats: None,
+            sequencia: Sequencia::default(),
+            leitura_dias: Vec::new(),
             busca: Input::default(),
             resultados: Vec::new(),
             busca_sel: 0,
@@ -318,19 +329,27 @@ impl App {
     }
 
     fn abrir_detalhe(&mut self, id: i64) -> Result<()> {
-        self.livro = Some(self.db.livro(id)?);
-        self.notas = self.db.notas(id)?;
-        self.plano = self.db.plano(id)?;
+        self.carregar_livro(id)?;
         self.nota_sel = 0;
         self.tela = Tela::Detalhe;
         Ok(())
     }
 
+    fn carregar_livro(&mut self, id: i64) -> Result<()> {
+        let b = self.db.livro(id)?;
+        self.notas = self.db.notas(id)?;
+        self.plano = self.db.plano(id)?;
+        self.ritmo = match self.db.ritmo(id, hoje())? {
+            Some(r) if b.status == Status::Lendo => Some((r, self.db.previsao(&b, hoje())?)),
+            _ => None,
+        };
+        self.livro = Some(b);
+        Ok(())
+    }
+
     fn recarregar_detalhe(&mut self) -> Result<()> {
         if let Some(id) = self.livro.as_ref().map(|b| b.id) {
-            self.livro = Some(self.db.livro(id)?);
-            self.notas = self.db.notas(id)?;
-            self.plano = self.db.plano(id)?;
+            self.carregar_livro(id)?;
             self.nota_sel = self.nota_sel.min(self.notas.len().saturating_sub(1));
         }
         self.recarregar()
@@ -342,6 +361,8 @@ impl App {
 
     fn abrir_stats(&mut self) -> Result<()> {
         self.stats = Some(self.db.estatisticas(self.ano)?);
+        self.sequencia = self.db.sequencia(hoje())?;
+        self.leitura_dias = self.db.paginas_por_dia(hoje() - chrono::Days::new(DIAS_MAPA - 1), hoje())?;
         self.tela = Tela::Estatisticas;
         Ok(())
     }
@@ -747,7 +768,7 @@ impl App {
         }
         match f.id {
             Some(_) => {
-                self.db.salvar_livro(&b)?;
+                self.db.salvar_progresso(&b, hoje())?;
                 self.recarregar_detalhe()?;
                 self.ok("Livro atualizado.");
             }
@@ -772,7 +793,7 @@ impl App {
                 let p: i64 = valor.parse().context("digite um número de página")?;
                 let mut b = self.livro_atual()?;
                 let chegou_ao_fim = b.registrar_pagina(p, hoje());
-                self.db.salvar_livro(&b)?;
+                self.db.salvar_progresso(&b, hoje())?;
                 self.recarregar_detalhe()?;
                 if chegou_ao_fim {
                     self.confirmar("Chegou na última página! Marcar como lido?", Confirmacao::MarcarLido);
@@ -859,7 +880,7 @@ impl App {
     fn mudar_status(&mut self, novo: Status) -> Result<()> {
         let mut b = self.livro_atual()?;
         b.mudar_status(novo, hoje());
-        self.db.salvar_livro(&b)?;
+        self.db.salvar_progresso(&b, hoje())?;
         self.recarregar_detalhe()?;
         self.ok(format!("Status: {} {}", novo.simbolo(), novo.nome()));
         Ok(())

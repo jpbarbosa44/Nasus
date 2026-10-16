@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::Db;
@@ -78,16 +79,22 @@ impl Db {
 
     pub fn salvar_livro(&self, b: &Book) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "UPDATE books SET title = ?2, author = ?3, isbn = ?4, pages = ?5, status = ?6, current_page = ?7,
-               rating = ?8, review = ?9, started_at = ?10, finished_at = ?11
-             WHERE id = ?1",
-            params![
-                b.id, b.title, b.author, b.isbn, b.pages, b.status.chave(), b.current_page, b.rating,
-                b.review, b.started_at, b.finished_at
-            ],
-        )?;
-        gravar_categorias(&tx, b.id, &b.categorias)?;
+        atualizar(&tx, b)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// salvar_progresso salva o livro e anota no histórico as páginas lidas
+    /// hoje, quando o livro está sendo lido (ou acabou de ser terminado).
+    pub fn salvar_progresso(&self, b: &Book, hoje: NaiveDate) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let (antes, status): (i64, String) =
+            tx.query_row("SELECT current_page, status FROM books WHERE id = ?1", [b.id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        atualizar(&tx, b)?;
+        let lendo = b.status == Status::Lendo || (b.status == Status::Lido && status == Status::Lendo.chave());
+        if lendo && b.current_page != antes {
+            super::historico::anotar(&tx, b.id, hoje, antes, b.current_page)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -107,6 +114,20 @@ impl Db {
     }
 }
 
+/// atualizar grava todos os campos do livro, inclusive as categorias.
+fn atualizar(conn: &Connection, b: &Book) -> Result<()> {
+    conn.execute(
+        "UPDATE books SET title = ?2, author = ?3, isbn = ?4, pages = ?5, status = ?6, current_page = ?7,
+           rating = ?8, review = ?9, started_at = ?10, finished_at = ?11
+         WHERE id = ?1",
+        params![
+            b.id, b.title, b.author, b.isbn, b.pages, b.status.chave(), b.current_page, b.rating,
+            b.review, b.started_at, b.finished_at
+        ],
+    )?;
+    gravar_categorias(conn, b.id, &b.categorias)
+}
+
 /// gravar_categorias substitui as categorias do livro.
 fn gravar_categorias(conn: &Connection, id: i64, categorias: &[String]) -> Result<()> {
     conn.execute("DELETE FROM book_categories WHERE book_id = ?1", [id])?;
@@ -119,8 +140,6 @@ fn gravar_categorias(conn: &Connection, id: i64, categorias: &[String]) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
-
     use super::*;
 
     #[test]

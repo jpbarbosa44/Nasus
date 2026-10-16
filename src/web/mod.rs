@@ -372,14 +372,14 @@ impl Api {
                 let novo = Status::de_chave(&m.status).ok_or(Falha(400, "status desconhecido".into()))?;
                 let mut b = self.livro_existente(m.id)?;
                 b.mudar_status(novo, hoje);
-                self.db.salvar_livro(&b)?;
+                self.db.salvar_progresso(&b, hoje)?;
                 Ok(json!({ "livro": livro_json(&b) }))
             }
             ("POST", "/api/livro/pagina") => {
                 let p: Pagina = ler(corpo)?;
                 let mut b = self.livro_existente(p.id)?;
                 let chegou_ao_fim = b.registrar_pagina(p.pagina, hoje);
-                self.db.salvar_livro(&b)?;
+                self.db.salvar_progresso(&b, hoje)?;
                 Ok(json!({ "livro": livro_json(&b), "chegou_ao_fim": chegou_ao_fim }))
             }
             ("POST", "/api/livro/avaliar") => {
@@ -452,7 +452,12 @@ impl Api {
                     "nota_media": e.nota_media,
                     "lendo": e.lendo,
                     "por_categoria": cats,
+                    "leitura": self.leitura(366, hoje)?,
                 }))
+            }
+            ("GET", "/api/historico") => {
+                let dias = parametro(query, "dias").and_then(|d| d.parse().ok()).unwrap_or(366u64).clamp(1, 3660);
+                Ok(self.leitura(dias, hoje)?)
             }
             ("POST", "/api/meta") => {
                 let m: Meta = ler(corpo)?;
@@ -493,7 +498,28 @@ impl Api {
         let b = self.livro_existente(id)?;
         let notas: Vec<Value> = self.db.notas(id)?.iter().map(nota_json).collect();
         let plano = self.db.plano(id)?.map(|p| plano_json(&p, &b, hoje));
-        Ok(json!({ "livro": livro_json(&b), "notas": notas, "plano": plano }))
+        let ritmo = match self.db.ritmo(id, hoje)? {
+            Some(r) if b.status == Status::Lendo => {
+                let fim = self.db.previsao(&b, hoje)?.map(|d| d.format("%d/%m/%Y").to_string());
+                json!({ "paginas_dia": r.round() as i64, "fim": fim })
+            }
+            _ => Value::Null,
+        };
+        Ok(json!({ "livro": livro_json(&b), "notas": notas, "plano": plano, "ritmo": ritmo }))
+    }
+
+    /// leitura resume o histórico: páginas por dia (datas ISO) e a sequência.
+    fn leitura(&self, dias: u64, hoje: NaiveDate) -> std::result::Result<Value, Falha> {
+        let de = hoje - chrono::Days::new(dias - 1);
+        let por_dia = self.db.paginas_por_dia(de, hoje)?;
+        let s = self.db.sequencia(hoje)?;
+        Ok(json!({
+            "desde": de.to_string(),
+            "hoje": hoje.to_string(),
+            "dias": por_dia.iter().map(|(d, n)| json!([d.to_string(), n])).collect::<Vec<_>>(),
+            "total": por_dia.iter().map(|(_, n)| n).sum::<i64>(),
+            "sequencia": { "atual": s.atual, "recorde": s.recorde, "leu_hoje": s.leu_hoje },
+        }))
     }
 
     fn salvar(&mut self, f: LivroForm, hoje: NaiveDate) -> Saida {
@@ -531,7 +557,7 @@ impl Api {
         }
         let id = match f.id {
             Some(id) => {
-                self.db.salvar_livro(&b)?;
+                self.db.salvar_progresso(&b, hoje)?;
                 id
             }
             None => self.db.inserir_livro(&b)?,
@@ -628,6 +654,9 @@ mod tests {
         let (_, v) = post(&mut a, "/api/livro/pagina", json!({ "id": id, "pagina": 50 }));
         assert_eq!((v["livro"]["status"].as_str(), v["chegou_ao_fim"].as_bool()), (Some("reading"), Some(false)));
 
+        let (_, v) = get(&mut a, "/api/historico", "dias=7");
+        assert_eq!((v["total"].clone(), v["sequencia"]["atual"].clone()), (json!(50), json!(1)), "{v}");
+        assert_eq!(get(&mut a, "/api/livro", &format!("id={id}")).1["ritmo"]["paginas_dia"], 50);
         let (_, v) = post(&mut a, "/api/nota", json!({ "livro": id, "tipo": "citacao", "texto": "p.10 O medo mata a mente." }));
         assert_eq!((v["nota"]["pagina"].as_i64(), v["nota"]["texto"].as_str()), (Some(10), Some("O medo mata a mente.")));
         let nota = v["nota"]["id"].as_i64().unwrap();

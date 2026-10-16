@@ -66,17 +66,6 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         Line::styled(" Biblioteca › Detalhes", cores::TITULO),
         "p página · s status · r nota · l plano · L recalcular · n nota · c citação · x remover nota · e editar · d remover · Esc voltar",
     );
-    let altura_resenha = if b.review.is_empty() { 0 } else { 4 };
-    let altura_plano = if app.plano.is_some() { 4 } else { 0 };
-    let [info, progresso, plano, resenha, notas] = Layout::vertical([
-        Constraint::Length(9),
-        Constraint::Length(2),
-        Constraint::Length(altura_plano),
-        Constraint::Length(altura_resenha),
-        Constraint::Min(3),
-    ])
-    .areas(meio);
-
     let autor = if b.author.is_empty() { "autor desconhecido" } else { &b.author };
     let paginas = match (b.pages, b.current_page) {
         (0, 0) => "—".to_string(),
@@ -85,7 +74,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     };
     let isbn = if b.isbn.is_empty() { String::new() } else { format!("    ISBN {}", b.isbn) };
     let nota = if b.rating == 0 { Span::styled("sem nota", cores::APAGADA) } else { Span::styled(b.estrelas(), cores::AMAR) };
-    let linhas = vec![
+    let mut linhas = vec![
         Line::styled(format!(" {}", b.title), cores::TITULO),
         Line::styled(format!(" por {autor}"), cores::APAGADA),
         Line::default(),
@@ -102,6 +91,24 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             },
         ),
     ];
+    if let Some((r, fim)) = app.ritmo {
+        let mut t = format!("{r:.0} pág/dia");
+        if let Some(fim) = fim {
+            t += &format!(" · no seu ritmo, termina em {}", fim.format("%d/%m"));
+        }
+        linhas.push(campo("Ritmo", Span::styled(t, cores::LIVRO)));
+    }
+    let altura_resenha = if b.review.is_empty() { 0 } else { 4 };
+    let altura_plano = if app.plano.is_some() { 4 } else { 0 };
+    let [info, progresso, plano, resenha, notas] = Layout::vertical([
+        Constraint::Length(linhas.len() as u16 + 1),
+        Constraint::Length(2),
+        Constraint::Length(altura_plano),
+        Constraint::Length(altura_resenha),
+        Constraint::Min(3),
+    ])
+    .areas(meio);
+
     f.render_widget(Paragraph::new(linhas), info);
 
     let linha = progresso.inner(Margin::new(1, 0));

@@ -1,11 +1,12 @@
+use chrono::{Datelike, Days, Local};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{BarChart, Block, Gauge, Paragraph};
 
 use super::{cores, milhar, moldura};
-use crate::app::App;
+use crate::app::{App, DIAS_MAPA};
 
 const MESES: [&str; 12] = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
@@ -21,8 +22,14 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         Line::styled(format!(" Estatísticas › {}", s.ano), cores::TITULO),
         "←→ ano · g definir meta · Esc voltar · ? ajuda",
     );
-    let [meta, nums, grafico] =
-        Layout::vertical([Constraint::Length(3), Constraint::Length(6), Constraint::Min(6)]).areas(meio);
+    let altura_mapa = if meio.height >= 25 { 9 } else { 0 };
+    let [meta, nums, mapa, grafico] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(6),
+        Constraint::Length(altura_mapa),
+        Constraint::Min(6),
+    ])
+    .areas(meio);
 
     let bloco = Block::bordered().title(format!(" Meta de {} ", s.ano)).border_style(cores::APAGADA);
     match s.meta {
@@ -78,6 +85,10 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     }
     f.render_widget(Paragraph::new(linhas), cats);
 
+    if altura_mapa > 0 {
+        desenhar_mapa(f, app, mapa);
+    }
+
     let dados: Vec<(&str, u64)> = MESES.iter().copied().zip(s.por_mes).collect();
     let largura_barra = ((grafico.width.saturating_sub(2)) / 12).saturating_sub(1).clamp(1, 6);
     f.render_widget(
@@ -91,4 +102,53 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             .label_style(cores::APAGADA),
         grafico,
     );
+}
+
+/// desenhar_mapa mostra as páginas lidas em cada dia dos últimos seis meses,
+/// uma coluna por semana (segunda a domingo), como o mapa de contribuições do GitHub.
+fn desenhar_mapa(f: &mut Frame, app: &App, area: Rect) {
+    let hoje = Local::now().date_naive();
+    let primeiro = hoje - Days::new(DIAS_MAPA - 1);
+    let inicio = primeiro - Days::new(primeiro.weekday().num_days_from_monday() as u64);
+    let semanas = ((hoje - inicio).num_days() / 7 + 1) as usize;
+    let maior = app.leitura_dias.iter().map(|(_, n)| *n).max().unwrap_or(0).max(1);
+    let mut grade = vec![vec![Span::raw("  "); semanas]; 7];
+    for col in 0..semanas {
+        for (lin, linha) in grade.iter_mut().enumerate() {
+            let d = inicio + Days::new((col * 7 + lin) as u64);
+            if d < primeiro || d > hoje {
+                continue;
+            }
+            let n = app.leitura_dias.iter().find(|(dia, _)| *dia == d).map_or(0, |(_, n)| *n);
+            linha[col] = match n * 4 / maior {
+                _ if n == 0 => Span::styled("· ", cores::APAGADA),
+                0 => Span::styled("░░", cores::LIVRO),
+                1 => Span::styled("▒▒", cores::LIVRO),
+                2 => Span::styled("▓▓", cores::LIVRO),
+                _ => Span::styled("██", cores::LIVRO),
+            };
+        }
+    }
+    const DIAS: [&str; 7] = ["seg", "   ", "qua", "   ", "sex", "   ", "dom"];
+    let linhas: Vec<Line> = grade
+        .into_iter()
+        .zip(DIAS)
+        .map(|(cels, rotulo)| {
+            let mut v = vec![Span::styled(format!(" {rotulo} "), cores::APAGADA)];
+            v.extend(cels);
+            Line::from(v)
+        })
+        .collect();
+    let s = app.sequencia;
+    let total: i64 = app.leitura_dias.iter().map(|(_, n)| n).sum();
+    let titulo = if s.atual > 0 {
+        format!(" Leitura · 🔥 {} seguidos (recorde {}) · {} páginas em 6 meses ", dias(s.atual), s.recorde, milhar(total))
+    } else {
+        format!(" Leitura · recorde de {} seguidos · {} páginas em 6 meses ", dias(s.recorde), milhar(total))
+    };
+    f.render_widget(Paragraph::new(linhas).block(Block::bordered().title(titulo).border_style(cores::APAGADA)), area);
+}
+
+fn dias(n: i64) -> String {
+    crate::model::plural(n, "dia")
 }

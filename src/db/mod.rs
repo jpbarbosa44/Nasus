@@ -2,6 +2,7 @@
 //! pelo `PRAGMA user_version`.
 
 mod books;
+mod historico;
 mod notes;
 mod plans;
 mod stats;
@@ -12,6 +13,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use rusqlite::Connection;
 
+pub use historico::Sequencia;
 pub use stats::Estatisticas;
 
 const MIGRACOES: &[&str] = &[r#"
@@ -54,6 +56,14 @@ CREATE TABLE book_categories (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     name    TEXT    NOT NULL COLLATE NOCASE,
     PRIMARY KEY (book_id, name)
+);
+"#, r#"
+CREATE TABLE reading_log (
+    book_id   INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    day       TEXT    NOT NULL,
+    from_page INTEGER NOT NULL,
+    to_page   INTEGER NOT NULL,
+    PRIMARY KEY (book_id, day)
 );
 "#];
 

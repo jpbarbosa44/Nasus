@@ -49,6 +49,12 @@ CREATE TABLE plans (
     start_page    INTEGER NOT NULL,
     pages_per_day INTEGER NOT NULL
 );
+"#, r#"
+CREATE TABLE book_categories (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    name    TEXT    NOT NULL COLLATE NOCASE,
+    PRIMARY KEY (book_id, name)
+);
 "#];
 
 pub struct Db {

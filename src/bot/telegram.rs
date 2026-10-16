@@ -1,5 +1,6 @@
 //! Cliente mínimo da API HTTP do Telegram (https://core.telegram.org/bots/api).
 
+use std::io::Read;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -10,6 +11,8 @@ use super::comandos::Resposta;
 
 /// limite de texto de uma mensagem no Telegram (4096) com folga
 const MAX_TEXTO: usize = 4000;
+/// maior imagem que o bot aceita baixar
+const MAX_ARQUIVO: u64 = 10 * 1024 * 1024;
 
 pub struct Telegram {
     agente: ureq::Agent,
@@ -31,6 +34,40 @@ pub struct Mensagem {
     pub message_id: i64,
     pub chat: Chat,
     pub text: Option<String>,
+    /// a mesma foto em vários tamanhos, do menor para o maior
+    pub photo: Option<Vec<Foto>>,
+    /// imagem mandada "como arquivo", sem a compressão do Telegram
+    pub document: Option<Documento>,
+}
+
+#[derive(Deserialize)]
+pub struct Foto {
+    pub file_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct Documento {
+    pub file_id: String,
+    pub mime_type: Option<String>,
+}
+
+impl Mensagem {
+    /// imagem devolve o file_id da imagem da mensagem, se houver: o maior
+    /// tamanho da foto ou um arquivo de imagem.
+    pub fn imagem(&self) -> Option<&str> {
+        if let Some(f) = self.photo.as_ref().and_then(|v| v.last()) {
+            return Some(&f.file_id);
+        }
+        self.document
+            .as_ref()
+            .filter(|d| d.mime_type.as_deref().is_some_and(|m| m.starts_with("image/")))
+            .map(|d| d.file_id.as_str())
+    }
+}
+
+#[derive(Deserialize)]
+struct Arquivo {
+    file_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +140,25 @@ impl Telegram {
                 ("allowed_updates", r#"["message","callback_query"]"#),
             ],
         )
+    }
+
+    /// baixar traz o conteúdo de um arquivo mandado ao bot (getFile + download).
+    pub fn baixar(&self, file_id: &str) -> Result<Vec<u8>> {
+        let arq: Arquivo = self.chamar("getFile", &[("file_id", file_id)])?;
+        let caminho = arq.file_path.context("getFile: arquivo sem caminho")?;
+        let url = format!("https://api.telegram.org/file/bot{}/{caminho}", self.token);
+        let resp = self
+            .agente
+            .get(&url)
+            .call()
+            // a URL contém o token: nunca deixar ele ir parar num log
+            .map_err(|e| anyhow!("baixando arquivo: {}", e.to_string().replace(&self.token, "***")))?;
+        let mut dados = Vec::new();
+        resp.into_reader().take(MAX_ARQUIVO + 1).read_to_end(&mut dados)?;
+        if dados.len() as u64 > MAX_ARQUIVO {
+            bail!("imagem grande demais (máximo de {} MB)", MAX_ARQUIVO / 1024 / 1024);
+        }
+        Ok(dados)
     }
 
     /// enviar manda a resposta, quebrando textos longos em várias mensagens;

@@ -14,7 +14,7 @@ fn data(d: Option<NaiveDate>) -> String {
 }
 
 fn campo<'a>(rotulo: &str, valor: Span<'a>) -> Line<'a> {
-    Line::from(vec![Span::styled(format!(" {rotulo:<9}"), cores::APAGADA), valor])
+    Line::from(vec![Span::styled(format!(" {rotulo:<11}"), cores::APAGADA), valor])
 }
 
 /// linhas_plano resume o plano: período, prazo e a situação em relação à
@@ -69,7 +69,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     let altura_resenha = if b.review.is_empty() { 0 } else { 4 };
     let altura_plano = if app.plano.is_some() { 4 } else { 0 };
     let [info, progresso, plano, resenha, notas] = Layout::vertical([
-        Constraint::Length(8),
+        Constraint::Length(9),
         Constraint::Length(2),
         Constraint::Length(altura_plano),
         Constraint::Length(altura_resenha),
@@ -93,6 +93,14 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         campo("Páginas", Span::raw(paginas + &isbn)),
         campo("Período", Span::raw(format!("{} → {}", data(b.started_at), data(b.finished_at)))),
         campo("Nota", nota),
+        campo(
+            "Categorias",
+            if b.categorias.is_empty() {
+                Span::styled("— (e para pôr)", cores::APAGADA)
+            } else {
+                Span::raw(b.categorias.join(" · "))
+            },
+        ),
     ];
     f.render_widget(Paragraph::new(linhas), info);
 

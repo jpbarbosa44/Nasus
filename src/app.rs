@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::db::{Db, Estatisticas};
 use crate::input::Input;
-use crate::model::{Book, Note, NoteKind, Plano, Status};
+use crate::model::{Book, Note, NoteKind, Plano, Status, ler_categorias, separar_pagina};
 use crate::openlibrary::{self, Resultado};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,8 +24,10 @@ pub enum Tela {
 }
 
 /// Itens do menu inicial: título e resumo.
-pub const MENU: [(&str, &str); 5] = [
+pub const MENU: [(&str, &str); 7] = [
     ("Biblioteca", "todos os seus livros, por status"),
+    ("Estante", "livros que você tem"),
+    ("Quero ler", "a fila do que vem a seguir"),
     ("Lendo agora", "livros em andamento"),
     ("Estatísticas", "meta do ano, páginas e notas"),
     ("Buscar online", "Open Library por ISBN ou título"),
@@ -33,28 +35,48 @@ pub const MENU: [(&str, &str); 5] = [
 ];
 
 /// Abas da biblioteca; `None` é "Todos".
-pub const ABAS: [Option<Status>; 5] =
-    [None, Some(Status::Lendo), Some(Status::QueroLer), Some(Status::Lido), Some(Status::Abandonado)];
+pub const ABAS: [Option<Status>; 6] = [
+    None,
+    Some(Status::Estante),
+    Some(Status::Lendo),
+    Some(Status::QueroLer),
+    Some(Status::Lido),
+    Some(Status::Abandonado),
+];
+
+/// aba_do_menu é a aba da biblioteca que o item `i` do menu abre.
+pub fn aba_do_menu(i: usize) -> Option<usize> {
+    let status = match i {
+        0 => return Some(0),
+        1 => Status::Estante,
+        2 => Status::QueroLer,
+        3 => Status::Lendo,
+        _ => return None,
+    };
+    ABAS.iter().position(|a| *a == Some(status))
+}
 
 pub fn rotulo_aba(aba: Option<Status>) -> &'static str {
     aba.map_or("Todos", Status::rotulo)
 }
 
-pub const CAMPOS: [&str; 6] = ["Título", "Autor", "ISBN", "Páginas", "Status", "Resenha"];
-pub const CAMPO_STATUS: usize = 4;
+pub const CAMPOS: [&str; 7] = ["Título", "Autor", "ISBN", "Páginas", "Categorias", "Status", "Resenha"];
+pub const CAMPO_STATUS: usize = 5;
 
 /// Formulário de livro (novo ou edição).
 pub struct Form {
     pub id: Option<i64>,
-    /// título, autor, ISBN, páginas, resenha (o status não é texto)
-    entradas: [Input; 5],
+    /// título, autor, ISBN, páginas, categorias, resenha (o status não é texto)
+    entradas: [Input; 6],
     pub status: Status,
     pub foco: usize,
+    /// categorias já usadas, sugeridas abaixo dos campos
+    pub existentes: Vec<String>,
 }
 
 impl Form {
     fn novo(status: Status) -> Self {
-        Form { id: None, entradas: Default::default(), status, foco: 0 }
+        Form { id: None, entradas: Default::default(), status, foco: 0, existentes: Vec::new() }
     }
 
     fn de_livro(b: &Book) -> Self {
@@ -65,10 +87,12 @@ impl Form {
                 Input::com(&b.author),
                 Input::com(&b.isbn),
                 Input::com(paginas_texto(b.pages)),
+                Input::com(b.categorias.join(", ")),
                 Input::com(&b.review),
             ],
             status: b.status,
             foco: 0,
+            existentes: Vec::new(),
         }
     }
 
@@ -81,9 +105,11 @@ impl Form {
                 Input::com(&r.isbn),
                 Input::com(paginas_texto(r.pages)),
                 Input::default(),
+                Input::default(),
             ],
-            status: Status::QueroLer,
+            status: Status::Estante,
             foco: 0,
+            existentes: Vec::new(),
         }
     }
 
@@ -159,6 +185,7 @@ pub enum Modal {
     Prompt { titulo: String, input: Input, acao: Acao },
     Confirmar { texto: String, acao: Confirmacao },
     Status { sel: usize },
+    Categorias { lista: Vec<(String, i64)>, sel: usize },
 }
 
 #[derive(Clone, Copy)]
@@ -197,6 +224,8 @@ pub struct App {
     pub livros: Vec<Book>,
     pub aba: usize,
     pub filtro: String,
+    /// só mostra os livros desta categoria
+    pub categoria: Option<String>,
     pub sel: usize,
 
     pub livro: Option<Book>,
@@ -236,6 +265,7 @@ impl App {
             livros: Vec::new(),
             aba: 0,
             filtro: String::new(),
+            categoria: None,
             sel: 0,
             livro: None,
             notas: Vec::new(),
@@ -263,10 +293,12 @@ impl App {
         self.livros
             .iter()
             .filter(|b| ABAS[self.aba].is_none_or(|s| b.status == s))
+            .filter(|b| self.categoria.as_ref().is_none_or(|c| b.categorias.contains(c)))
             .filter(|b| {
                 filtro.is_empty()
                     || b.title.to_lowercase().contains(&filtro)
                     || b.author.to_lowercase().contains(&filtro)
+                    || b.categorias.iter().any(|c| c.contains(&filtro))
             })
             .collect()
     }
@@ -390,7 +422,7 @@ impl App {
         match k.code {
             KeyCode::Up | KeyCode::Char('k') => self.menu_sel = (self.menu_sel + n - 1) % n,
             KeyCode::Down | KeyCode::Char('j') => self.menu_sel = (self.menu_sel + 1) % n,
-            KeyCode::Char(c @ '1'..='5') => {
+            KeyCode::Char(c @ '1'..='7') => {
                 self.menu_sel = c as usize - '1' as usize;
                 return self.entrar_menu();
             }
@@ -403,15 +435,16 @@ impl App {
     }
 
     fn entrar_menu(&mut self) -> Result<()> {
+        if let Some(aba) = aba_do_menu(self.menu_sel) {
+            self.aba = aba;
+            self.sel = 0;
+            self.recarregar()?;
+            self.tela = Tela::Biblioteca;
+            return Ok(());
+        }
         match self.menu_sel {
-            0 | 1 => {
-                self.aba = self.menu_sel;
-                self.sel = 0;
-                self.recarregar()?;
-                self.tela = Tela::Biblioteca;
-            }
-            2 => self.abrir_stats()?,
-            3 => self.ir_para(Tela::Busca),
+            4 => self.abrir_stats()?,
+            5 => self.ir_para(Tela::Busca),
             _ => self.ir_para(Tela::Ajuda),
         }
         Ok(())
@@ -438,12 +471,20 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
-                self.modal = Some(Modal::Form(Form::novo(ABAS[self.aba].unwrap_or(Status::QueroLer))));
+                self.abrir_form(Form::novo(ABAS[self.aba].unwrap_or(Status::Estante)))?;
             }
             KeyCode::Char('e') => {
-                if let Some(b) = self.selecionado() {
-                    self.modal = Some(Modal::Form(Form::de_livro(b)));
+                if let Some(f) = self.selecionado().map(Form::de_livro) {
+                    self.abrir_form(f)?;
                 }
+            }
+            KeyCode::Char('c') => {
+                let lista = self.db.categorias()?;
+                if lista.is_empty() {
+                    bail!("nenhum livro tem categoria ainda; edite um livro (e) para pôr");
+                }
+                let sel = self.categoria.as_ref().and_then(|c| lista.iter().position(|(n, _)| n == c)).unwrap_or(0);
+                self.modal = Some(Modal::Categorias { lista, sel });
             }
             KeyCode::Char('d') => {
                 if let Some((id, titulo)) = self.selecionado().map(|b| (b.id, b.title.clone())) {
@@ -455,6 +496,10 @@ impl App {
             KeyCode::Char('?') => self.ir_para(Tela::Ajuda),
             KeyCode::Esc if !self.filtro.is_empty() => {
                 self.filtro.clear();
+                self.sel = 0;
+            }
+            KeyCode::Esc if self.categoria.is_some() => {
+                self.categoria = None;
                 self.sel = 0;
             }
             KeyCode::Esc | KeyCode::Char('q') => self.tela = Tela::Menu,
@@ -485,8 +530,8 @@ impl App {
                 self.modal = Some(Modal::Status { sel });
             }
             KeyCode::Char('r') => self.prompt("Nota (0 a 5)", b.rating.to_string(), Acao::Nota),
-            KeyCode::Char('n') => self.prompt("Nova nota", "", Acao::NovaNota(NoteKind::Nota)),
-            KeyCode::Char('c') => self.prompt("Nova citação", "", Acao::NovaNota(NoteKind::Citacao)),
+            KeyCode::Char('n') => self.prompt("Nova nota (p.115 no início marca a página)", "", Acao::NovaNota(NoteKind::Nota)),
+            KeyCode::Char('c') => self.prompt("Nova citação (p.115 no início marca a página)", "", Acao::NovaNota(NoteKind::Citacao)),
             KeyCode::Char('x') => {
                 if let Some(id) = self.notas.get(self.nota_sel).map(|n| n.id) {
                     self.confirmar("Remover a nota selecionada?", Confirmacao::RemoverNota(id));
@@ -511,7 +556,7 @@ impl App {
                     Confirmacao::RecalcularPlano,
                 );
             }
-            KeyCode::Char('e') => self.modal = Some(Modal::Form(Form::de_livro(&b))),
+            KeyCode::Char('e') => self.abrir_form(Form::de_livro(&b))?,
             KeyCode::Char('d') => {
                 self.confirmar(format!("Remover “{}” e suas notas?", b.title), Confirmacao::RemoverLivro(b.id));
             }
@@ -555,7 +600,8 @@ impl App {
                 if let Some(r) = self.resultados.get(self.busca_sel)
                     && q == self.ultima_busca
                 {
-                    self.modal = Some(Modal::Form(Form::de_resultado(r)));
+                    let f = Form::de_resultado(r);
+                    self.abrir_form(f)?;
                 } else if !q.is_empty() && !self.buscando {
                     self.iniciar_busca(q);
                 }
@@ -636,13 +682,35 @@ impl App {
                     KeyCode::Esc => return Ok(()),
                     KeyCode::Up | KeyCode::Char('k') => sel = (sel + n - 1) % n,
                     KeyCode::Down | KeyCode::Char('j') => sel = (sel + 1) % n,
-                    KeyCode::Char(c @ '1'..='4') => return self.mudar_status(Status::TODOS[c as usize - '1' as usize]),
+                    KeyCode::Char(c @ '1'..='5') => return self.mudar_status(Status::TODOS[c as usize - '1' as usize]),
                     KeyCode::Enter => return self.mudar_status(Status::TODOS[sel]),
                     _ => {}
                 }
                 self.modal = Some(Modal::Status { sel });
             }
+            Modal::Categorias { lista, mut sel } => {
+                let n = lista.len();
+                match k.code {
+                    KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => sel = (sel + n - 1) % n,
+                    KeyCode::Down | KeyCode::Char('j') => sel = (sel + 1) % n,
+                    KeyCode::Enter => {
+                        self.categoria = lista.get(sel).map(|(c, _)| c.clone());
+                        self.sel = 0;
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                self.modal = Some(Modal::Categorias { lista, sel });
+            }
         }
+        Ok(())
+    }
+
+    /// abrir_form mostra o formulário com as categorias já usadas como sugestão.
+    fn abrir_form(&mut self, mut f: Form) -> Result<()> {
+        f.existentes = self.db.categorias()?.into_iter().map(|(c, _)| c).collect();
+        self.modal = Some(Modal::Form(f));
         Ok(())
     }
 
@@ -664,7 +732,8 @@ impl App {
         b.author = texto(1);
         b.isbn = texto(2);
         b.pages = paginas;
-        b.review = texto(5);
+        b.categorias = ler_categorias(&texto(4));
+        b.review = texto(6);
         if b.pages > 0 {
             b.current_page = b.current_page.min(b.pages);
         }
@@ -718,12 +787,16 @@ impl App {
                     bail!("o texto está vazio");
                 }
                 let b = self.livro_atual()?;
+                let (pagina, texto) = separar_pagina(valor);
+                if texto.is_empty() {
+                    bail!("escreva o texto da nota");
+                }
                 self.db.inserir_nota(&Note {
                     id: 0,
                     book_id: b.id,
                     kind,
-                    page: (b.current_page > 0).then_some(b.current_page),
-                    body: valor.to_string(),
+                    page: pagina.or((b.current_page > 0).then_some(b.current_page)),
+                    body: texto.to_string(),
                     created_at: hoje(),
                 })?;
                 self.recarregar_detalhe()?;

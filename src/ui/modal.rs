@@ -58,6 +58,25 @@ pub fn desenhar(f: &mut Frame, m: &Modal) {
                 .collect();
             f.render_widget(Paragraph::new(linhas), dentro);
         }
+        Modal::Categorias { lista, sel } => {
+            let altura = (lista.len() as u16 + 3).min(tela.height.saturating_sub(2));
+            let dentro = abrir(f, centro(tela, 40, altura), "Filtrar por categoria");
+            let [itens, rodape] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(dentro);
+            // rola a lista para o item selecionado continuar visível
+            let visiveis = itens.height as usize;
+            let inicio = (*sel + 1).saturating_sub(visiveis);
+            let linhas: Vec<Line> = lista
+                .iter()
+                .enumerate()
+                .skip(inicio)
+                .map(|(i, (nome, n))| {
+                    let texto = format!(" {nome:<28} {n:>4}");
+                    if i == *sel { Line::styled(texto, cores::SELEC) } else { Line::raw(texto) }
+                })
+                .collect();
+            f.render_widget(Paragraph::new(linhas), itens);
+            f.render_widget(Paragraph::new(Line::styled(" Enter filtrar · Esc cancelar", cores::APAGADA)), rodape);
+        }
     }
 }
 
@@ -94,6 +113,12 @@ fn formulario(f: &mut Frame, form: &Form) {
             None => {}
         }
     }
+    let dica = if form.existentes.is_empty() {
+        " categorias separadas por vírgula: romance, filosofia".to_string()
+    } else {
+        format!(" categorias existentes: {}", form.existentes.join(", "))
+    };
+    f.render_widget(Paragraph::new(Line::styled(dica, cores::APAGADA)), linhas[CAMPOS.len()]);
     f.render_widget(
         Paragraph::new(Line::styled(" Tab próximo campo · ←→ status · Enter salvar · Esc cancelar", cores::APAGADA)),
         linhas[CAMPOS.len() + 1],

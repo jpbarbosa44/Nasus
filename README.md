@@ -17,7 +17,8 @@
 
 ## O que faz
 
-- **Biblioteca** por status: lendo, quero ler, lidos e abandonados, com filtro e barra de progresso.
+- **Biblioteca** por status: estante (todo livro novo entra nela), quero ler (a fila), lendo, lidos e abandonados, com filtro e barra de progresso.
+- **Categorias** livres por livro (romance, filosofia, clássico…), com filtro por categoria.
 - **Progresso**: registre a página atual; o livro passa a "lendo" sozinho e, na última página, o Nasus oferece marcar como lido. Datas de início e fim são preenchidas automaticamente.
 - **Plano de leitura**: informe o início e quantas páginas por dia (ex.: 800 páginas, 25/dia) e o Nasus calcula a data de fim, mostra a meta do dia e se você está à frente ou atrás.
 - **Busca por ISBN ou título**: ISBNs brasileiros na [BrasilAPI](https://brasilapi.com.br) (base da CBL), complementados pela [Open Library](https://openlibrary.org).
@@ -70,10 +71,12 @@ O bot só responde ao chat autorizado. Pelo celular:
 | Mensagem | O que faz |
 |---|---|
 | `120` / `+25` | registra a página atual / soma páginas lidas |
-| `/lendo`, `/fila`, `/livro #3` | consulta os livros |
-| `/buscar duna` | busca e adiciona com um toque |
+| `/lendo`, `/estante`, `/fila`, `/livro #3` | consulta os livros |
+| `/buscar duna` | busca e põe na estante com um toque |
+| 📷 foto do código de barras | lê o ISBN da contracapa e busca o livro |
+| `/categoria #3 romance, filosofia` | define as categorias do livro (`/categorias` lista todas) |
 | `/plano 25` | plano de 25 páginas por dia a partir de hoje |
-| `/nota texto`, `/citacao texto` | anota no livro atual |
+| `/nota texto`, `/citacao p.115 texto` | anota no livro atual (p.115 marca a página; sem ela, vale a atual) |
 | `/meta 12` | define a meta de livros do ano |
 
 Às 8h ele manda a meta de leitura do dia e às 21h lembra do que ainda falta. Mande `/ajuda` para a lista completa.

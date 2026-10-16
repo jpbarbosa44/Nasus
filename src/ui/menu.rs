@@ -4,8 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{art, cores, rodape};
-use crate::app::{App, MENU};
-use crate::model::Status;
+use crate::app::{App, MENU, aba_do_menu};
 
 /// Menu inicial: cabeçalho NASUS e as telas numeradas, como no Prisma.
 pub fn desenhar(f: &mut Frame, app: &App) {
@@ -20,15 +19,13 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     .areas(area);
     f.render_widget(Paragraph::new(cab), topo);
 
-    let lendo = app.livros.iter().filter(|b| b.status == Status::Lendo).count();
     let linhas: Vec<Line> = MENU
         .iter()
         .enumerate()
         .map(|(i, (titulo, resumo))| {
-            let resumo = match i {
-                0 => format!("{resumo} · {} livros", app.livros.len()),
-                1 => format!("{resumo} · {lendo}"),
-                _ => resumo.to_string(),
+            let resumo = match aba_do_menu(i) {
+                Some(aba) => format!("{resumo} · {}", app.contagem(aba)),
+                None => resumo.to_string(),
             };
             let rotulo = format!(" {}  {:<14}", i + 1, titulo);
             let estilo = if i == app.menu_sel { cores::SELEC } else { Default::default() };
@@ -36,5 +33,5 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         })
         .collect();
     f.render_widget(Paragraph::new(linhas), lista);
-    rodape(f, app, baixo, "↑↓ navegar · Enter abrir · 1-5 atalho · ? ajuda · q sair");
+    rodape(f, app, baixo, "↑↓ navegar · Enter abrir · 1-7 atalho · ? ajuda · q sair");
 }

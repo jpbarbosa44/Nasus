@@ -9,6 +9,9 @@ use crate::model::Book;
 
 pub fn desenhar(f: &mut Frame, app: &App) {
     let mut titulo = vec![Span::styled(" Biblioteca", cores::TITULO)];
+    if let Some(c) = &app.categoria {
+        titulo.push(Span::styled(format!("   categoria: {c}  (Esc limpa)"), cores::AMAR));
+    }
     if !app.filtro.is_empty() {
         titulo.push(Span::styled(format!("   filtro: {}  (Esc limpa)", app.filtro), cores::AMAR));
     }
@@ -16,7 +19,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         f,
         app,
         Line::from(titulo),
-        "Tab abas · ↑↓ mover · Enter abrir · a adicionar · e editar · d remover · / filtrar · o buscar online · ? ajuda",
+        "Tab abas · ↑↓ mover · Enter abrir · a adicionar · e editar · d remover · / filtrar · c categoria · o buscar online · ? ajuda",
     );
     let [abas, lista] = Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(meio);
 
@@ -43,6 +46,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             Cell::from(Span::styled(b.status.simbolo(), cores::status(b.status))),
             Cell::from(b.title.clone()),
             Cell::from(Span::styled(b.author.clone(), cores::APAGADA)),
+            Cell::from(Span::styled(b.categorias.join(", "), cores::APAGADA)),
             Cell::from(progresso(b)),
             Cell::from(Span::styled(b.estrelas(), cores::AMAR)),
         ])
@@ -53,11 +57,12 @@ pub fn desenhar(f: &mut Frame, app: &App) {
             Constraint::Length(1),
             Constraint::Fill(3),
             Constraint::Fill(2),
+            Constraint::Fill(1),
             Constraint::Length(15),
             Constraint::Length(5),
         ],
     )
-    .header(Row::new(["", "TÍTULO", "AUTOR", "PROGRESSO", "NOTA"]).style(cores::APAGADA))
+    .header(Row::new(["", "TÍTULO", "AUTOR", "CATEGORIAS", "PROGRESSO", "NOTA"]).style(cores::APAGADA))
     .row_highlight_style(cores::SELEC);
     let mut estado = TableState::default().with_selected(Some(app.sel));
     f.render_stateful_widget(tabela, lista, &mut estado);

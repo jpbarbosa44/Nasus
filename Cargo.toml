@@ -15,8 +15,14 @@ lto = true
 anyhow = "1"
 chrono = "0.4"
 directories = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ratatui = "0.29"
 rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
+rxing = { version = "0.9", default-features = false, features = ["image", "decoders", "oned", "no_character_set_support"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+# o writer gera códigos de barras para os testes
+rxing = { version = "0.9", default-features = false, features = ["encoders"] }

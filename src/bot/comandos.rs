@@ -5,8 +5,9 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, NaiveDate};
 
+use crate::codigo_barras;
 use crate::db::Db;
-use crate::model::{Book, Note, NoteKind, Plano, Situacao, Status, plural};
+use crate::model::{Book, Note, NoteKind, Plano, Situacao, Status, ler_categorias, plural, separar_pagina};
 use crate::openlibrary::Resultado;
 use crate::ui::milhar;
 
@@ -19,17 +20,21 @@ Com mais de um livro em andamento, eu pergunto qual (ou use 120 #3).
 
 Consultar:
 /lendo — livros em andamento e o plano de hoje
-/fila — livros que você quer ler
+/estante — livros que você tem
+/fila — livros que você quer ler (a seguir)
 /livro #3 — detalhes de um livro
 /meta — meta de livros do ano (/meta 12 define)
 
 Organizar:
-/buscar duna — busca na Open Library por título ou ISBN e adiciona com um toque
+/buscar duna — busca na Open Library por título ou ISBN e põe na estante com um toque
+📷 foto do código de barras do livro — eu leio o ISBN e busco
 /novo Título | Autor | páginas — adiciona à mão
-/status #3 lendo — fila, lendo, lido ou abandonado
+/status #3 lendo — estante, fila, lendo, lido ou abandonado
+/categoria #3 romance, filosofia — categorias do livro (/categorias lista todas)
 /avaliar #3 5 — nota de 0 a 5
 /nota texto — anota algo no livro atual (/nota #3 texto)
-/citacao texto — guarda uma citação, com a página atual
+/citacao texto — guarda uma citação
+Comece com p.115 para marcar a página (/citacao p.115 texto); sem isso, vale a página atual.
 
 Plano de leitura:
 /plano 25 — 25 páginas por dia a partir de hoje (/plano #3 25 15/10 escolhe livro e início)
@@ -98,6 +103,7 @@ fn ler_data(s: &str, hoje: NaiveDate) -> Option<NaiveDate> {
 
 fn ler_status(s: &str) -> Option<Status> {
     match s.to_lowercase().as_str() {
+        "estante" | "tenho" => Some(Status::Estante),
         "fila" | "quero" | "quero ler" => Some(Status::QueroLer),
         "lendo" | "comecar" | "começar" => Some(Status::Lendo),
         "lido" | "terminei" | "terminado" => Some(Status::Lido),
@@ -136,6 +142,23 @@ impl Nucleo {
         self.interpretar(texto.trim(), hoje).unwrap_or_else(|e| Resposta::texto(format!("❌ {e:#}")))
     }
 
+    /// foto lê o ISBN no código de barras da imagem e busca o livro.
+    pub fn foto(&mut self, imagem: &[u8]) -> Resposta {
+        self.ler_foto(imagem).unwrap_or_else(|e| Resposta::texto(format!("❌ {e:#}")))
+    }
+
+    fn ler_foto(&mut self, imagem: &[u8]) -> Result<Resposta> {
+        let Some(isbn) = codigo_barras::ler_isbn(imagem)? else {
+            return Ok(Resposta::texto(
+                "Não achei o código de barras de um livro na foto. Tente mais perto, com boa luz e o código reto \
+                 (mandar como arquivo evita a compressão) — ou mande o número com /buscar 978…",
+            ));
+        };
+        let mut r = self.buscar(&isbn)?;
+        r.texto = format!("📷 ISBN {isbn}\n{}", r.texto);
+        Ok(r)
+    }
+
     pub fn callback(&mut self, dados: &str, hoje: NaiveDate) -> Resposta {
         self.tocar(dados, hoje).unwrap_or_else(|e| Resposta::texto(format!("❌ {e:#}")))
     }
@@ -155,6 +178,7 @@ impl Nucleo {
             return match nome.as_str() {
                 "start" | "ajuda" | "help" => Ok(Resposta::texto(AJUDA)),
                 "lendo" => self.lendo(hoje),
+                "estante" => self.estante(),
                 "fila" => self.fila(),
                 "livro" => {
                     let b = self.alvo(separar_id(resto).0)?;
@@ -164,6 +188,8 @@ impl Nucleo {
                 "novo" => self.novo(resto, hoje),
                 "status" => self.status(resto, hoje),
                 "avaliar" => self.avaliar(resto),
+                "categoria" => self.categoria(resto),
+                "categorias" => self.categorias(),
                 "nota" => self.nota(resto, NoteKind::Nota, hoje),
                 "citacao" | "citação" => self.nota(resto, NoteKind::Citacao, hoje),
                 "plano" => self.plano(resto, hoje),
@@ -195,6 +221,7 @@ impl Nucleo {
             }
             ("lido", Some(id), _) => self.mudar_status(id, Status::Lido, hoje),
             ("lendo", Some(id), _) => self.mudar_status(id, Status::Lendo, hoje),
+            ("fila", Some(id), _) => self.mudar_status(id, Status::QueroLer, hoje),
             ("add", Some(i), _) => self.adicionar(i as usize, hoje),
             ("x", ..) => Ok(Resposta::texto("👍")),
             _ => bail!("botão desconhecido"),
@@ -264,6 +291,7 @@ impl Nucleo {
                 }
             }
             Status::Lendo => "\nBoa leitura! Mande a página quando avançar, ou /plano 25 para um ritmo.".into(),
+            Status::QueroLer => "\nEstá na /fila.".into(),
             _ => String::new(),
         };
         Ok(Resposta::texto(format!("{} {}: {}{extra}", novo.simbolo(), b.title, novo.nome())))
@@ -287,7 +315,7 @@ impl Nucleo {
     fn fila(&self) -> Result<Resposta> {
         let fila: Vec<Book> = self.db.livros()?.into_iter().filter(|b| b.status == Status::QueroLer).collect();
         if fila.is_empty() {
-            return Ok(Resposta::texto("A fila está vazia. Use /buscar para achar o próximo livro."));
+            return Ok(Resposta::texto("A fila está vazia. Escolha um livro da /estante ou use /buscar."));
         }
         let mut t = String::from("📋 Quero ler");
         for b in &fila {
@@ -298,6 +326,25 @@ impl Nucleo {
             .iter()
             .take(8)
             .map(|b| vec![(format!("▶ Começar: {}", b.title), format!("lendo:{}", b.id))])
+            .collect();
+        Ok(Resposta { texto: t, botoes })
+    }
+
+    fn estante(&self) -> Result<Resposta> {
+        let estante: Vec<Book> = self.db.livros()?.into_iter().filter(|b| b.status == Status::Estante).collect();
+        if estante.is_empty() {
+            return Ok(Resposta::texto("A estante está vazia. Use /buscar ou mande a foto do código de barras."));
+        }
+        let mut t = String::from("📚 Na estante");
+        for b in &estante {
+            let autor = if b.author.is_empty() { String::new() } else { format!(" — {}", b.author) };
+            let cats = if b.categorias.is_empty() { String::new() } else { format!(" [{}]", b.categorias.join(", ")) };
+            t += &format!("\n#{} {}{autor}{cats}", b.id, b.title);
+        }
+        let botoes = estante
+            .iter()
+            .take(8)
+            .map(|b| vec![(format!("📋 Quero ler: {}", b.title), format!("fila:{}", b.id))])
             .collect();
         Ok(Resposta { texto: t, botoes })
     }
@@ -314,6 +361,9 @@ impl Nucleo {
         }
         if b.rating > 0 {
             t += &format!("\n{}", b.estrelas());
+        }
+        if !b.categorias.is_empty() {
+            t += &format!("\n🏷 {}", b.categorias.join(" · "));
         }
         if let Some(p) = self.db.plano(b.id)? {
             t += &format!("\n{}", descricao_plano(b, &p, hoje));
@@ -340,7 +390,7 @@ impl Nucleo {
         if self.resultados.is_empty() {
             return Ok(Resposta::texto("Nada encontrado na Open Library."));
         }
-        let mut t = String::from("🔎 Toque para adicionar à fila:");
+        let mut t = String::from("🔎 Toque para pôr na estante:");
         for (i, r) in self.resultados.iter().enumerate() {
             let mut extra = Vec::new();
             if let Some(a) = r.ano {
@@ -361,7 +411,7 @@ impl Nucleo {
     fn adicionar(&mut self, i: usize, hoje: NaiveDate) -> Result<Resposta> {
         let r = self.resultados.get(i).cloned().context("essa busca expirou; busque de novo")?;
         let mut b = Book { title: r.title, author: r.author, isbn: r.isbn, pages: r.pages, ..Book::novo() };
-        b.mudar_status(Status::QueroLer, hoje);
+        b.mudar_status(Status::Estante, hoje);
         self.inserir(b)
     }
 
@@ -369,8 +419,11 @@ impl Nucleo {
         let id = self.db.inserir_livro(&b)?;
         let paginas = if b.pages > 0 { format!(" ({} páginas)", b.pages) } else { String::new() };
         Ok(Resposta {
-            texto: format!("➕ Na fila: #{id} {}{paginas}", b.title),
-            botoes: vec![vec![("▶ Começar a ler".into(), format!("lendo:{id}"))]],
+            texto: format!("➕ Na estante: #{id} {}{paginas}\nPara pôr categorias: /categoria #{id} romance, filosofia", b.title),
+            botoes: vec![vec![
+                ("📋 Quero ler".into(), format!("fila:{id}")),
+                ("▶ Começar a ler".into(), format!("lendo:{id}")),
+            ]],
         })
     }
 
@@ -390,13 +443,41 @@ impl Nucleo {
             pages,
             ..Book::novo()
         };
-        b.mudar_status(Status::QueroLer, hoje);
+        b.mudar_status(Status::Estante, hoje);
         self.inserir(b)
+    }
+
+    /// categoria define as categorias do livro; sem texto, apaga.
+    fn categoria(&mut self, resto: &str) -> Result<Resposta> {
+        let (id, texto) = separar_id(resto);
+        if id.is_none() && texto.is_empty() {
+            return self.categorias();
+        }
+        let mut b = self.alvo(id)?;
+        b.categorias = ler_categorias(&texto);
+        self.db.salvar_livro(&b)?;
+        Ok(Resposta::texto(if b.categorias.is_empty() {
+            format!("🏷 {}: sem categorias", b.title)
+        } else {
+            format!("🏷 {}: {}", b.title, b.categorias.join(" · "))
+        }))
+    }
+
+    fn categorias(&self) -> Result<Resposta> {
+        let lista = self.db.categorias()?;
+        if lista.is_empty() {
+            return Ok(Resposta::texto("Nenhuma categoria ainda. Use /categoria #3 romance, filosofia"));
+        }
+        let mut t = String::from("🏷 Categorias");
+        for (nome, n) in lista {
+            t += &format!("\n{nome} ({n})");
+        }
+        Ok(Resposta::texto(t))
     }
 
     fn status(&mut self, resto: &str, hoje: NaiveDate) -> Result<Resposta> {
         let (id, nome) = separar_id(resto);
-        let novo = ler_status(&nome).context("use /status #id fila|lendo|lido|abandonado")?;
+        let novo = ler_status(&nome).context("use /status #id estante|fila|lendo|lido|abandonado")?;
         let b = self.alvo(id)?;
         self.mudar_status(b.id, novo, hoje)
     }
@@ -413,12 +494,13 @@ impl Nucleo {
 
     fn nota(&mut self, resto: &str, kind: NoteKind, hoje: NaiveDate) -> Result<Resposta> {
         let (id, texto) = separar_id(resto);
+        let (pagina, texto) = separar_pagina(&texto);
         if texto.is_empty() {
             bail!("escreva o texto depois do comando");
         }
         let b = self.alvo(id)?;
-        let page = (b.current_page > 0).then_some(b.current_page);
-        self.db.inserir_nota(&Note { id: 0, book_id: b.id, kind, page, body: texto, created_at: hoje })?;
+        let page = pagina.or((b.current_page > 0).then_some(b.current_page));
+        self.db.inserir_nota(&Note { id: 0, book_id: b.id, kind, page, body: texto.into(), created_at: hoje })?;
         let onde = page.map_or(String::new(), |p| format!(" (pág. {p})"));
         let o_que = if kind == NoteKind::Citacao { "💬 Citação salva" } else { "📝 Nota salva" };
         Ok(Resposta::texto(format!("{o_que} em {}{onde}.", b.title)))
@@ -573,8 +655,9 @@ mod tests {
     fn fluxo_novo_livro_plano_e_progresso() {
         let mut n = nucleo();
         let r = n.mensagem("/novo Livro de testes | Fulano | 800", dia(14));
-        assert!(r.texto.contains("#1 Livro de testes"), "{}", r.texto);
-        assert_eq!(r.botoes[0][0].1, "lendo:1");
+        assert!(r.texto.contains("Na estante: #1 Livro de testes"), "{}", r.texto);
+        assert_eq!(r.botoes[0][0].1, "fila:1");
+        assert_eq!(r.botoes[0][1].1, "lendo:1");
 
         assert!(n.mensagem("120", dia(14)).texto.starts_with("❌"), "nada em andamento ainda");
 
@@ -616,6 +699,9 @@ mod tests {
         assert_eq!(n.db.livro(2).unwrap().current_page, 5);
         assert!(n.mensagem("/nota gostei", dia(2)).texto.contains("mais de um livro"));
         assert!(n.mensagem("/nota #2 gostei", dia(2)).texto.contains("Nota salva em B (pág. 5)"));
+        let r = n.mensagem("/citacao #2 p.3 uma frase", dia(2));
+        assert!(r.texto.contains("Citação salva em B (pág. 3)"), "{}", r.texto);
+        assert_eq!(n.db.notas(2).unwrap().last().unwrap().body, "uma frase");
     }
 
     #[test]
@@ -628,12 +714,35 @@ mod tests {
         assert!(r.texto.contains("#1 duna (resultado) (300 páginas)"), "{}", r.texto);
         assert!(n.callback("add:9", dia(1)).texto.contains("expirou"));
 
+        assert!(n.mensagem("/fila", dia(1)).texto.contains("vazia"), "livro novo vai para a estante");
+        let r = n.mensagem("/estante", dia(1));
+        assert!(r.texto.contains("#1 duna"), "{}", r.texto);
+        assert_eq!(r.botoes[0][0].1, "fila:1");
+        assert!(n.callback("fila:1", dia(1)).texto.contains("Quero ler"));
         assert!(n.mensagem("/fila", dia(1)).texto.contains("#1 duna"));
+        assert!(n.mensagem("/estante", dia(1)).texto.contains("vazia"));
+
+        let r = n.mensagem("/categoria #1 Ficção científica, clássico", dia(1));
+        assert!(r.texto.contains("clássico · ficção científica"), "{}", r.texto);
+        assert!(n.mensagem("/livro #1", dia(1)).texto.contains("🏷 clássico · ficção científica"));
+        assert!(n.mensagem("/categorias", dia(1)).texto.contains("clássico (1)"));
+        assert!(n.mensagem("/categoria #1", dia(1)).texto.contains("sem categorias"));
         assert!(n.mensagem("/status #1 lendo", dia(1)).texto.contains("Lendo"));
         assert!(n.mensagem("/avaliar 4", dia(1)).texto.contains("★★★★☆"));
         assert!(n.mensagem("/meta 12", dia(1)).texto.contains("0 de 12 livros"));
         assert!(n.mensagem("/lendo", dia(1)).texto.contains("#1 duna"));
         assert!(n.mensagem("/xyz", dia(1)).texto.contains("desconhecido"));
         assert!(n.mensagem("/start@nasus_bot", dia(1)).texto.starts_with("📚 Nasus"));
+    }
+
+    #[test]
+    fn foto_do_codigo_de_barras_busca_o_isbn() {
+        let mut n = nucleo();
+        let r = n.foto(&codigo_barras::png_de_teste("9788535914849"));
+        assert!(r.texto.starts_with("📷 ISBN 9788535914849\n"), "{}", r.texto);
+        assert!(r.texto.contains("9788535914849 (resultado)"), "{}", r.texto);
+        assert_eq!(r.botoes[0][0].1, "add:0");
+        assert!(n.foto(&codigo_barras::png_de_teste("7891000315507")).texto.starts_with("Não achei"));
+        assert!(n.foto(b"lixo").texto.starts_with("❌"));
     }
 }

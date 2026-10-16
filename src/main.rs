@@ -2,6 +2,7 @@
 
 mod app;
 mod bot;
+mod codigo_barras;
 mod db;
 mod input;
 mod model;

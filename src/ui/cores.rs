@@ -16,6 +16,7 @@ pub const AMAR: Style = Style::new().fg(Color::LightYellow);
 
 pub fn status(s: Status) -> Style {
     match s {
+        Status::Estante => Style::new().fg(Color::Gray),
         Status::Lendo => LIVRO,
         Status::QueroLer => Style::new().fg(Color::White),
         Status::Lido => OK,

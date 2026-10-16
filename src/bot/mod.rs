@@ -197,8 +197,20 @@ fn tratar_mensagem(tg: &Telegram, cfg: &Config, nucleo: &mut Nucleo, m: Mensagem
         println!("Ignorando mensagem do chat {chat} (autorizado: {}).", cfg.chat_id);
         return;
     }
-    let Some(texto) = m.text else { return };
-    let r = nucleo.mensagem(&texto, Local::now().date_naive());
+    let hoje = Local::now().date_naive();
+    let r = if let Some(id) = m.imagem() {
+        match tg.baixar(id) {
+            Ok(bytes) => nucleo.foto(&bytes),
+            Err(e) => {
+                eprintln!("aviso: baixando foto: {e:#}");
+                Resposta { texto: "❌ não consegui baixar a foto; tente de novo".into(), botoes: Vec::new() }
+            }
+        }
+    } else if let Some(texto) = m.text {
+        nucleo.mensagem(&texto, hoje)
+    } else {
+        return;
+    };
     enviar(tg, chat, &r);
 }
 

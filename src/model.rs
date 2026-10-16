@@ -4,6 +4,8 @@ use chrono::NaiveDate;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
+    /// livro que você tem, sem planos de ler ainda
+    Estante,
     QueroLer,
     Lendo,
     Lido,
@@ -12,11 +14,12 @@ pub enum Status {
 
 impl Status {
     /// Ordem usada nas abas e no seletor de status.
-    pub const TODOS: [Status; 4] = [Status::Lendo, Status::QueroLer, Status::Lido, Status::Abandonado];
+    pub const TODOS: [Status; 5] = [Status::Estante, Status::Lendo, Status::QueroLer, Status::Lido, Status::Abandonado];
 
     /// chave é o valor gravado no banco.
     pub fn chave(self) -> &'static str {
         match self {
+            Status::Estante => "shelf",
             Status::QueroLer => "want",
             Status::Lendo => "reading",
             Status::Lido => "read",
@@ -31,6 +34,7 @@ impl Status {
     /// nome é o status de um livro ("Lido"); rotulo é o da aba ("Lidos").
     pub fn nome(self) -> &'static str {
         match self {
+            Status::Estante => "Na estante",
             Status::QueroLer => "Quero ler",
             Status::Lendo => "Lendo",
             Status::Lido => "Lido",
@@ -40,6 +44,7 @@ impl Status {
 
     pub fn rotulo(self) -> &'static str {
         match self {
+            Status::Estante => "Estante",
             Status::Lido => "Lidos",
             Status::Abandonado => "Abandonados",
             s => s.nome(),
@@ -48,6 +53,7 @@ impl Status {
 
     pub fn simbolo(self) -> &'static str {
         match self {
+            Status::Estante => "□",
             Status::QueroLer => "○",
             Status::Lendo => "▶",
             Status::Lido => "✔",
@@ -83,6 +89,8 @@ pub struct Book {
     pub review: String,
     pub started_at: Option<NaiveDate>,
     pub finished_at: Option<NaiveDate>,
+    /// em minúsculas, ordem alfabética
+    pub categorias: Vec<String>,
 }
 
 impl Book {
@@ -93,12 +101,13 @@ impl Book {
             author: String::new(),
             isbn: String::new(),
             pages: 0,
-            status: Status::QueroLer,
+            status: Status::Estante,
             current_page: 0,
             rating: 0,
             review: String::new(),
             started_at: None,
             finished_at: None,
+            categorias: Vec::new(),
         }
     }
 
@@ -109,10 +118,10 @@ impl Book {
 
     /// mudar_status troca o status e mantém as datas coerentes: começar a ler
     /// marca o início, terminar marca o fim (e completa as páginas), voltar
-    /// para "quero ler" zera tudo.
+    /// para a estante ou "quero ler" zera tudo.
     pub fn mudar_status(&mut self, novo: Status, hoje: NaiveDate) {
         match novo {
-            Status::QueroLer => {
+            Status::Estante | Status::QueroLer => {
                 self.started_at = None;
                 self.finished_at = None;
                 self.current_page = 0;
@@ -134,11 +143,11 @@ impl Book {
     }
 
     /// registrar_pagina atualiza o progresso; sair da página 0 de um livro
-    /// "quero ler" passa ele para "lendo". Devolve true quando a leitura chegou
+    /// na estante ou em "quero ler" passa ele para "lendo". Devolve true quando a leitura chegou
     /// na última página de um livro que ainda não está marcado como lido.
     pub fn registrar_pagina(&mut self, pagina: i64, hoje: NaiveDate) -> bool {
         self.current_page = if self.pages > 0 { pagina.clamp(0, self.pages) } else { pagina.max(0) };
-        if self.current_page > 0 && self.status == Status::QueroLer {
+        if self.current_page > 0 && matches!(self.status, Status::Estante | Status::QueroLer) {
             self.mudar_status(Status::Lendo, hoje);
         }
         self.pages > 0 && self.current_page >= self.pages && self.status != Status::Lido
@@ -169,6 +178,45 @@ impl NoteKind {
 
     pub fn de_chave(s: &str) -> Self {
         if s == "quote" { NoteKind::Citacao } else { NoteKind::Nota }
+    }
+}
+
+/// ler_categorias interpreta "Romance, filosofia": separa por vírgula, em
+/// minúsculas, sem vazios nem repetições, em ordem alfabética.
+pub fn ler_categorias(texto: &str) -> Vec<String> {
+    let mut v: Vec<String> =
+        texto.split(',').map(|c| c.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()).filter(|c| !c.is_empty()).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// separar_pagina tira a página do começo de uma nota ("p.115 texto",
+/// "pág. 115 texto", "p115 texto"); sem ela, devolve o texto inteiro.
+pub fn separar_pagina(texto: &str) -> (Option<i64>, &str) {
+    fn primeira(s: &str) -> (&str, &str) {
+        let s = s.trim_start();
+        match s.find(char::is_whitespace) {
+            Some(i) => (&s[..i], s[i..].trim_start()),
+            None => (s, ""),
+        }
+    }
+    let numero = |n: &str| {
+        (!n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| n.parse::<i64>().ok())
+            .flatten()
+            .filter(|n| *n > 0)
+    };
+    let texto = texto.trim();
+    let (palavra, resto) = primeira(texto);
+    let palavra = palavra.to_lowercase();
+    let Some(num) = ["pág.", "pag.", "pág", "pag", "p.", "p"].iter().find_map(|p| palavra.strip_prefix(p)) else {
+        return (None, texto);
+    };
+    let (num, resto) = if num.is_empty() { primeira(resto) } else { (num, resto) };
+    match numero(num) {
+        Some(n) => (Some(n), resto),
+        None => (None, texto),
     }
 }
 
@@ -272,6 +320,25 @@ pub fn plural(n: i64, palavra: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn le_categorias() {
+        assert_eq!(ler_categorias("Romance, filosofia ,romance"), ["filosofia", "romance"]);
+        assert_eq!(ler_categorias("  Ficção   Científica ,, "), ["ficção científica"]);
+        assert!(ler_categorias("").is_empty());
+    }
+
+    #[test]
+    fn separa_a_pagina_da_nota() {
+        assert_eq!(separar_pagina("p.115 Tudo é mais simples"), (Some(115), "Tudo é mais simples"));
+        assert_eq!(separar_pagina("pág. 42 linha 1\nlinha 2"), (Some(42), "linha 1\nlinha 2"));
+        assert_eq!(separar_pagina("P7 curto"), (Some(7), "curto"));
+        assert_eq!(separar_pagina("p 10"), (Some(10), ""));
+        assert_eq!(separar_pagina("para pensar"), (None, "para pensar"));
+        assert_eq!(separar_pagina("p. depois"), (None, "p. depois"));
+        assert_eq!(separar_pagina("p0 nada"), (None, "p0 nada"));
+        assert_eq!(separar_pagina("115 sem prefixo"), (None, "115 sem prefixo"));
+    }
+
     fn plano(pagina_inicial: i64, paginas_dia: i64) -> Plano {
         Plano { book_id: 1, inicio: dia(14), pagina_inicial, paginas_dia }
     }
@@ -320,8 +387,9 @@ mod tests {
         for s in Status::TODOS {
             assert_eq!(Status::de_chave(s.chave()), Some(s));
         }
-        assert_eq!(Status::Abandonado.proximo(), Status::Lendo);
-        assert_eq!(Status::Lendo.anterior(), Status::Abandonado);
+        assert_eq!(Status::Abandonado.proximo(), Status::Estante);
+        assert_eq!(Status::Estante.anterior(), Status::Abandonado);
+        assert_eq!(Book::novo().status, Status::Estante, "livro novo vai para a estante");
     }
 
     #[test]
@@ -338,11 +406,17 @@ mod tests {
 
         b.mudar_status(Status::QueroLer, dia(10));
         assert_eq!((b.started_at, b.finished_at, b.current_page), (None, None, 0));
+
+        b.mudar_status(Status::Lendo, dia(11));
+        b.current_page = 40;
+        b.mudar_status(Status::Estante, dia(12));
+        assert_eq!((b.started_at, b.current_page), (None, 0), "voltar à estante zera");
     }
 
     #[test]
     fn registrar_pagina_comeca_leitura_e_avisa_fim() {
         let mut b = Book { pages: 200, ..Book::novo() };
+        assert_eq!(b.status, Status::Estante);
         assert!(!b.registrar_pagina(50, dia(2)));
         assert_eq!(b.status, Status::Lendo);
         assert_eq!(b.started_at, Some(dia(2)));

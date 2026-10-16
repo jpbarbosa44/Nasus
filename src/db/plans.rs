@@ -7,7 +7,7 @@ use crate::model::{Book, Plano, Status};
 
 impl Db {
     /// aplicar_plano grava o plano do livro (ou o remove, com 0 páginas por
-    /// dia). Um livro que estava na fila passa a "lendo" no início do plano.
+    /// dia). Um livro que estava na estante ou na fila passa a "lendo" no início do plano.
     pub fn aplicar_plano(
         &self,
         livro: &Book,
@@ -24,7 +24,7 @@ impl Db {
         }
         let p = Plano { book_id: livro.id, inicio, pagina_inicial, paginas_dia };
         self.salvar_plano(&p)?;
-        if livro.status == Status::QueroLer {
+        if matches!(livro.status, Status::Estante | Status::QueroLer) {
             let mut b = livro.clone();
             b.mudar_status(Status::Lendo, inicio);
             self.salvar_livro(&b)?;

@@ -32,6 +32,13 @@ impl Db {
         Ok(())
     }
 
+    /// metas devolve todas as metas, por ano.
+    pub fn metas(&self) -> Result<Vec<(i32, i64)>> {
+        let mut stmt = self.conn.prepare("SELECT year, target_books FROM goals ORDER BY year")?;
+        let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(v)
+    }
+
     pub fn meta(&self, ano: i32) -> Result<Option<i64>> {
         Ok(self
             .conn

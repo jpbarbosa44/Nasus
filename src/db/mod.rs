@@ -1,6 +1,7 @@
 //! Persistência em SQLite. Cada migração em MIGRACOES roda uma vez, controlada
 //! pelo `PRAGMA user_version`.
 
+mod backup;
 mod books;
 mod historico;
 mod notes;
@@ -13,6 +14,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use rusqlite::Connection;
 
+pub use backup::{backups, pasta_backups, restaurar};
 pub use historico::Sequencia;
 pub use stats::Estatisticas;
 
@@ -69,6 +71,8 @@ CREATE TABLE reading_log (
 
 pub struct Db {
     conn: Connection,
+    /// arquivo do banco; None no banco em memória dos testes
+    caminho: Option<PathBuf>,
 }
 
 impl Db {
@@ -76,27 +80,35 @@ impl Db {
         if let Some(dir) = caminho.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("criando {}", dir.display()))?;
         }
-        Self::preparar(Connection::open(caminho)?)
+        Self::preparar(Connection::open(caminho)?, Some(caminho.to_path_buf()))
     }
 
     #[cfg(test)]
     pub fn em_memoria() -> Result<Self> {
-        Self::preparar(Connection::open_in_memory()?)
+        Self::preparar(Connection::open_in_memory()?, None)
     }
 
-    fn preparar(conn: Connection) -> Result<Self> {
+    fn preparar(conn: Connection, caminho: Option<PathBuf>) -> Result<Self> {
         // o bot e a TUI podem usar o banco ao mesmo tempo: WAL deixa um ler
         // enquanto o outro grava, e o busy_timeout espera em vez de falhar
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let versao: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let db = Db { conn, caminho };
+        // a cópia do dia sai antes das migrações: se uma der errado, dá para voltar
+        if versao > 0
+            && let Err(e) = db.backup_diario(chrono::Local::now().date_naive())
+        {
+            eprintln!("aviso: backup diário: {e:#}");
+        }
+        let conn = &db.conn;
         for (i, sql) in MIGRACOES.iter().enumerate().skip(versao as usize) {
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(sql).with_context(|| format!("migração {}", i + 1))?;
             tx.execute_batch(&format!("PRAGMA user_version = {}", i + 1))?;
             tx.commit()?;
         }
-        Ok(Db { conn })
+        Ok(db)
     }
 
     /// caminho_padrao é `$NASUS_DB` ou `~/.local/share/nasus/nasus.db`.

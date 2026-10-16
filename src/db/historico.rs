@@ -30,6 +30,23 @@ pub(super) fn anotar(conn: &Connection, book_id: i64, dia: NaiveDate, de: i64, a
 }
 
 impl Db {
+    /// leituras devolve o histórico de um livro: (dia, de, até).
+    pub fn leituras(&self, book_id: i64) -> Result<Vec<(NaiveDate, i64, i64)>> {
+        let mut stmt =
+            self.conn.prepare("SELECT day, from_page, to_page FROM reading_log WHERE book_id = ?1 ORDER BY day")?;
+        let v = stmt.query_map([book_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(v)
+    }
+
+    /// inserir_leitura grava uma linha do histórico, como veio (usado ao importar).
+    pub fn inserir_leitura(&self, book_id: i64, dia: NaiveDate, de: i64, ate: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO reading_log (book_id, day, from_page, to_page) VALUES (?1, ?2, ?3, ?4)",
+            params![book_id, dia, de, ate],
+        )?;
+        Ok(())
+    }
+
     /// paginas_por_dia soma as páginas lidas em cada dia do intervalo (só os
     /// dias com leitura). Voltar páginas não conta como leitura negativa.
     pub fn paginas_por_dia(&self, de: NaiveDate, ate: NaiveDate) -> Result<Vec<(NaiveDate, i64)>> {

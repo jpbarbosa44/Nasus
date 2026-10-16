@@ -242,6 +242,10 @@ fn verificar_agenda(tg: &Telegram, cfg: &mut Config, caminho_cfg: &Path, nucleo:
     let hoje = agora.date_naive();
     let chave = hoje.to_string();
     let mut mudou = false;
+    // o bot fica dias com o banco aberto: a cópia do dia sai daqui
+    if let Err(e) = nucleo.backup_diario(hoje) {
+        eprintln!("aviso: backup diário: {e:#}");
+    }
     if agora.hour() >= HORA_MANHA && cfg.ultimo_lembrete != chave {
         match nucleo.lembrete_manha(hoje) {
             Ok(Some(r)) => enviar(tg, cfg.chat_id, &r),

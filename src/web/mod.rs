@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::codigo_barras;
+use crate::{codigo_barras, dados};
 use crate::db::Db;
 use crate::model::{Book, Note, NoteKind, Plano, Status, ler_categorias, separar_pagina};
 use crate::openlibrary::{self, Resultado};
@@ -69,8 +69,8 @@ pub fn rodar(caminho_db: &Path, args: &[String]) -> Result<()> {
         abrir_navegador(&url);
     }
     for mut req in servidor.incoming_requests() {
-        let (status, tipo, corpo) = atender(&mut api, &mut req);
-        let resp = tiny_http::Response::from_data(corpo)
+        let (status, tipo, corpo, baixar) = atender(&mut api, &mut req);
+        let mut resp = tiny_http::Response::from_data(corpo)
             .with_status_code(status)
             .with_header(cabecalho("Content-Type", tipo))
             .with_header(cabecalho("Cache-Control", "no-store"))
@@ -81,6 +81,9 @@ pub fn rodar(caminho_db: &Path, args: &[String]) -> Result<()> {
                 "default-src 'self'; img-src 'self' data: https://covers.openlibrary.org https://*.archive.org; \
                  style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
             ));
+        if let Some(nome) = baixar {
+            resp.add_header(cabecalho("Content-Disposition", &format!("attachment; filename=\"{nome}\"")));
+        }
         if let Err(e) = req.respond(resp) {
             eprintln!("aviso: respondendo: {e}");
         }
@@ -92,7 +95,8 @@ fn cabecalho(nome: &str, valor: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(nome, valor).expect("cabeçalho ASCII")
 }
 
-fn atender(api: &mut Api, req: &mut tiny_http::Request) -> (u16, &'static str, Vec<u8>) {
+/// atender devolve status, tipo, corpo e, num download, o nome do arquivo.
+fn atender(api: &mut Api, req: &mut tiny_http::Request) -> (u16, &'static str, Vec<u8>, Option<String>) {
     const JSON: &str = "application/json; charset=utf-8";
     let header = |nome: &str| {
         req.headers()
@@ -102,23 +106,36 @@ fn atender(api: &mut Api, req: &mut tiny_http::Request) -> (u16, &'static str, V
     };
     let metodo = req.method().as_str().to_string();
     if !protegido(header("Host").as_deref(), header("Origin").as_deref(), &metodo) {
-        return (403, "text/plain; charset=utf-8", "acesso negado".into());
+        return (403, "text/plain; charset=utf-8", "acesso negado".into(), None);
     }
     let url = req.url().to_string();
     let (caminho, query) = url.split_once('?').unwrap_or((&url, ""));
     if caminho == "/" && metodo == "GET" {
-        return (200, "text/html; charset=utf-8", PAGINA.into());
+        return (200, "text/html; charset=utf-8", PAGINA.into(), None);
+    }
+    if caminho == "/api/exportar" && metodo == "GET" {
+        let data = Local::now().format("%Y-%m-%d");
+        return match parametro(query, "formato").as_deref() {
+            Some("csv") => match dados::exportar_csv(&api.db) {
+                Ok(c) => (200, "text/csv; charset=utf-8", c.into(), Some(format!("nasus-{data}.csv"))),
+                Err(e) => (500, JSON, json!({ "erro": format!("{e:#}") }).to_string().into(), None),
+            },
+            _ => match dados::exportar_json(&api.db) {
+                Ok(c) => (200, JSON, c.into(), Some(format!("nasus-{data}.json"))),
+                Err(e) => (500, JSON, json!({ "erro": format!("{e:#}") }).to_string().into(), None),
+            },
+        };
     }
     if !caminho.starts_with("/api/") {
-        return (404, "text/plain; charset=utf-8", "não encontrado".into());
+        return (404, "text/plain; charset=utf-8", "não encontrado".into(), None);
     }
     let mut corpo = Vec::new();
     if req.as_reader().take(MAX_CORPO + 1).read_to_end(&mut corpo).is_err() || corpo.len() as u64 > MAX_CORPO {
-        return (413, JSON, json!({ "erro": "corpo grande demais" }).to_string().into());
+        return (413, JSON, json!({ "erro": "corpo grande demais" }).to_string().into(), None);
     }
     let hoje = Local::now().date_naive();
     let (status, v) = api.tratar(&metodo, caminho, query, &corpo, hoje);
-    (status, JSON, v.to_string().into())
+    (status, JSON, v.to_string().into(), None)
 }
 
 fn abrir_navegador(url: &str) {

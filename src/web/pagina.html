@@ -82,6 +82,7 @@
     .painel { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--r); padding: 16px 18px; }
 
     /* ── botões, campos ───────────────────────────── */
+    a.btn { text-decoration: none; color: inherit; display: inline-block; }
     .btn {
       background: var(--painel2); border: 1px solid var(--borda-forte); border-radius: var(--r-sm);
       padding: 6px 12px; cursor: pointer; transition: border-color var(--tempo), background var(--tempo); white-space: nowrap;
@@ -586,6 +587,18 @@
           <p>Notas e citações aceitam a página no começo: <code>p.115 texto</code>. Categorias vão no formulário, separadas por vírgula.</p>
           <dl class="atalhos">${linhas.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join("")}</dl>
           <p class="dim">Esta página só abre no seu computador (127.0.0.1); os dados são os mesmos do app de terminal e do bot.</p>
+        </div>
+        <h2>Seus dados</h2>
+        <div class="painel" style="max-width:860px">
+          <p>Baixe a biblioteca inteira: o JSON leva notas, planos e histórico e volta com <code>nasus importar arquivo.json</code>;
+             o CSV abre em planilha.</p>
+          <div class="acoes">
+            <a class="btn prim" href="/api/exportar?formato=json" download>Exportar JSON</a>
+            <a class="btn" href="/api/exportar?formato=csv" download>Exportar CSV</a>
+          </div>
+          <p class="dim">Para trazer seus livros do Goodreads: Meus livros › Importar e exportar › Exportar biblioteca, e depois
+             <code>nasus importar goodreads_library_export.csv</code> no terminal. O Nasus guarda uma cópia do banco por dia
+             (as 7 últimas) em <code>backups/</code>; <code>nasus restaurar</code> volta para uma delas.</p>
         </div>`;
     }
 

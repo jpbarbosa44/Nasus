@@ -715,6 +715,10 @@ impl Nucleo {
         Ok(v)
     }
 
+    pub fn backup_diario(&self, hoje: NaiveDate) -> Result<()> {
+        self.db.backup_diario(hoje).map(|_| ())
+    }
+
     /// lembrete_manha lista a meta de hoje de cada plano ativo.
     pub fn lembrete_manha(&self, hoje: NaiveDate) -> Result<Option<Resposta>> {
         let planos = self.planos_ativos(hoje)?;

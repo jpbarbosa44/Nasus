@@ -1,0 +1,882 @@
+<!doctype html>
+<!-- Página única da interface web do Nasus. Sem frameworks: HTML, CSS e JS
+     puros, conversando com a API JSON de src/web/mod.rs. O visual e os
+     atalhos espelham a TUI — mesmas telas, mesmas cores, mesmas teclas. -->
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nasus — curador das suas leituras</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path d='M8 20h38q4 0 4 4v62q0-4-4-4H8zM92 20H54q-4 0-4 4v62q0-4 4-4h38z' fill='%234dd8e6'/></svg>">
+  <style>
+    :root {
+      --bg: #0e1014;
+      --painel: #12151b;
+      --painel2: #171b23;
+      --borda: #232a35;
+      --borda-forte: #2f3847;
+      --fg: #d8dee4;
+      --dim: #6c7380;
+      --sel: #1b2a38;
+      --cy: #4dd8e6;
+      --ok: #7ace7a;
+      --err: #ee6a6a;
+      --amar: #e6c84d;
+      --cinza: #a3abb5;
+      --gutter: clamp(16px, 2.6vw, 48px);
+      --r: 8px;
+      --r-sm: 6px;
+      --sombra: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 30px rgba(0, 0, 0, .22);
+      --tempo: .14s ease;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(1100px 520px at 78% -8%, #131923 0%, transparent 60%), var(--bg);
+      color: var(--fg);
+      font: 14px/1.55 ui-monospace, "JetBrains Mono", "Fira Mono", Consolas, monospace;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::selection { background: var(--sel); }
+    * { scrollbar-width: thin; scrollbar-color: var(--borda-forte) transparent; }
+
+    a { color: var(--cy); }
+    button, input, select, textarea { font: inherit; color: inherit; }
+
+    .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+
+    /* ── menu lateral ─────────────────────────────── */
+    nav {
+      border-right: 1px solid var(--borda);
+      background: var(--painel);
+      padding: 22px 14px;
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    }
+    .marca { display: flex; gap: 10px; align-items: center; padding: 0 8px 18px; }
+    .marca svg { flex: none; }
+    .marca b { color: var(--cy); letter-spacing: .32em; font-size: 17px; }
+    .marca small { display: block; color: var(--dim); font-size: 11px; letter-spacing: 0; }
+    nav ol { list-style: none; margin: 0; padding: 0; }
+    nav li button {
+      width: 100%; display: flex; align-items: baseline; gap: 10px;
+      background: none; border: 0; border-radius: var(--r-sm);
+      padding: 8px 10px; text-align: left; cursor: pointer; transition: background var(--tempo);
+    }
+    nav li button:hover { background: var(--painel2); }
+    nav li button.ativo { background: var(--sel); color: var(--cy); }
+    nav .num { color: var(--dim); width: 1ch; }
+    nav .cont { margin-left: auto; color: var(--dim); font-size: 12px; }
+    nav .rodape { color: var(--dim); font-size: 11px; padding: 18px 10px 0; }
+
+    main { padding: 26px var(--gutter) 60px; min-width: 0; }
+    h1 { font-size: 18px; margin: 0 0 16px; color: var(--cy); font-weight: 600; }
+    h1 .migalha { color: var(--dim); font-weight: 400; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 26px 0 10px; font-weight: 500; }
+
+    .painel { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--r); padding: 16px 18px; }
+
+    /* ── botões, campos ───────────────────────────── */
+    .btn {
+      background: var(--painel2); border: 1px solid var(--borda-forte); border-radius: var(--r-sm);
+      padding: 6px 12px; cursor: pointer; transition: border-color var(--tempo), background var(--tempo); white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--cy); }
+    .btn.prim { background: var(--cy); color: #071316; border-color: var(--cy); font-weight: 600; }
+    .btn.perigo:hover { border-color: var(--err); color: var(--err); }
+    .btn kbd { color: var(--dim); margin-left: 6px; font-size: 11px; }
+    .btn.prim kbd { color: #0b3940; }
+    .acoes { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    input[type=text], input[type=number], input:not([type]), textarea, select {
+      background: var(--bg); border: 1px solid var(--borda-forte); border-radius: var(--r-sm);
+      padding: 7px 10px; width: 100%; outline: none; transition: border-color var(--tempo);
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--cy); }
+    textarea { resize: vertical; min-height: 70px; }
+    label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; }
+    .dica { color: var(--dim); font-size: 12px; margin-top: 4px; }
+
+    /* ── biblioteca ───────────────────────────────── */
+    .abas { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--borda); margin-bottom: 14px; }
+    .abas button {
+      background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; color: var(--dim);
+    }
+    .abas button.ativo { color: var(--cy); border-bottom-color: var(--cy); }
+    .barra-ferr { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .barra-ferr .filtro { flex: 1 1 220px; max-width: 360px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .chip {
+      border: 1px solid var(--borda-forte); background: none; border-radius: 99px; padding: 2px 10px;
+      font-size: 12px; cursor: pointer; color: var(--cinza);
+    }
+    .chip.ativo { border-color: var(--amar); color: var(--amar); }
+    .chip small { color: var(--dim); }
+
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; color: var(--dim); font-weight: 400; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--borda); }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
+    tbody tr { cursor: pointer; transition: background var(--tempo); }
+    tbody tr:hover { background: var(--painel2); }
+    tbody tr.sel { background: var(--sel); }
+    td.dim, .dim { color: var(--dim); }
+    td.titulo { font-weight: 500; }
+    .vazio { color: var(--dim); padding: 30px 10px; text-align: center; }
+
+    .progresso { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+    .progresso .trilho { flex: 1; height: 6px; background: var(--borda); border-radius: 3px; overflow: hidden; }
+    .progresso .cheio { height: 100%; background: var(--cy); }
+    .progresso span { font-size: 12px; color: var(--dim); width: 4ch; text-align: right; }
+    .estrelas { color: var(--amar); letter-spacing: 1px; }
+
+    .st-shelf { color: var(--cinza); }
+    .st-reading { color: var(--cy); }
+    .st-want { color: #fff; }
+    .st-read { color: var(--ok); }
+    .st-abandoned { color: var(--err); }
+
+    /* ── detalhe ──────────────────────────────────── */
+    .detalhe { display: grid; grid-template-columns: 150px 1fr; gap: 24px; align-items: start; }
+    .capa {
+      width: 150px; aspect-ratio: 2 / 3; border-radius: var(--r-sm); background: var(--painel2) center / cover;
+      border: 1px solid var(--borda); display: grid; place-items: center; color: var(--dim); font-size: 40px; overflow: hidden;
+    }
+    .capa img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .info h1 { margin-bottom: 2px; }
+    .info .autor { color: var(--dim); margin-bottom: 14px; }
+    .campos { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin-bottom: 14px; }
+    .campos dt { color: var(--dim); }
+    .campos dd { margin: 0; }
+    .estrelas-btn button { background: none; border: 0; color: var(--borda-forte); font-size: 18px; cursor: pointer; padding: 0 1px; }
+    .estrelas-btn button.on { color: var(--amar); }
+    .status-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .status-btns button { background: none; border: 1px solid var(--borda-forte); border-radius: 99px; padding: 2px 10px; cursor: pointer; }
+    .status-btns button.ativo { background: var(--sel); border-color: currentColor; }
+    .pagina-form { display: flex; gap: 8px; align-items: center; max-width: 360px; }
+    .pagina-form input { width: 110px; }
+
+    .notas { list-style: none; margin: 0; padding: 0; }
+    .notas li { padding: 10px 0; border-bottom: 1px solid var(--borda); display: flex; gap: 12px; align-items: flex-start; }
+    .notas .pg { color: var(--dim); min-width: 5ch; }
+    .notas .corpo { flex: 1; white-space: pre-wrap; }
+    .notas .citacao { font-style: italic; color: #e8ecf0; }
+    .notas .citacao::before { content: "“"; color: var(--cy); }
+    .notas .citacao::after { content: "”"; color: var(--cy); }
+    .notas .x { background: none; border: 0; color: var(--dim); cursor: pointer; }
+    .notas .x:hover { color: var(--err); }
+    .nova-nota { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; margin-top: 12px; align-items: start; }
+    .nova-nota select { width: auto; }
+
+    .plano-linha { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    .plano-linha > div { width: 150px; }
+    .situacao { margin-top: 8px; }
+
+    /* ── estatísticas ─────────────────────────────── */
+    .numeros { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .numeros .painel b { display: block; font-size: 24px; color: var(--cy); font-weight: 600; }
+    .numeros .painel span { color: var(--dim); font-size: 12px; }
+    .meta-trilho { height: 10px; background: var(--borda); border-radius: 5px; overflow: hidden; margin: 8px 0 4px; }
+    .meta-trilho div { height: 100%; background: var(--cy); }
+    .meses { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; align-items: end; height: 160px; }
+    .meses .col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+    .meses .bar { width: 100%; max-width: 34px; background: var(--cy); border-radius: 3px 3px 0 0; min-height: 2px; }
+    .meses .bar.zero { background: var(--borda); }
+    .meses small { color: var(--dim); font-size: 11px; }
+    .meses .v { font-size: 11px; color: var(--fg); }
+    .cats li { display: grid; grid-template-columns: 16ch 1fr 3ch; gap: 10px; align-items: center; padding: 3px 0; }
+    .cats { list-style: none; padding: 0; margin: 0; }
+    .cats .b { height: 8px; background: var(--cy); border-radius: 4px; }
+
+    /* ── busca ────────────────────────────────────── */
+    .busca-form { display: flex; gap: 8px; max-width: 640px; flex-wrap: wrap; }
+    .busca-form input { flex: 1 1 260px; }
+    .resultados { list-style: none; padding: 0; margin: 16px 0 0; max-width: 820px; }
+    .resultados li { display: flex; gap: 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--borda); border-radius: var(--r-sm); margin-bottom: 8px; background: var(--painel); }
+    .resultados li.sel { border-color: var(--cy); }
+    .resultados .txt { flex: 1; min-width: 0; }
+    .resultados .txt b { display: block; }
+    .badge { font-size: 11px; border: 1px solid var(--ok); color: var(--ok); border-radius: 99px; padding: 1px 8px; }
+
+    .atalhos { display: grid; grid-template-columns: max-content 1fr; gap: 6px 22px; }
+    .atalhos dt { color: var(--cy); }
+    .atalhos dd { margin: 0; }
+    kbd { border: 1px solid var(--borda-forte); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+
+    /* ── modal e aviso ────────────────────────────── */
+    .fundo { position: fixed; inset: 0; background: rgba(5, 7, 10, .66); display: grid; place-items: center; padding: 16px; z-index: 10; }
+    .modal { background: var(--painel); border: 1px solid var(--cy); border-radius: var(--r); padding: 20px 22px; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: var(--sombra); }
+    .modal h3 { margin: 0 0 6px; color: var(--cy); font-size: 15px; }
+    .modal .rodape { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .grade2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    .aviso { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--painel2); border: 1px solid var(--ok); color: var(--ok); padding: 8px 16px; border-radius: var(--r-sm); box-shadow: var(--sombra); z-index: 20; max-width: calc(100vw - 32px); }
+    .aviso.erro { border-color: var(--err); color: var(--err); }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }
+      nav { position: static; height: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--borda); }
+      .marca { padding-bottom: 10px; }
+      nav ol { display: flex; overflow-x: auto; gap: 4px; }
+      nav li button { white-space: nowrap; }
+      nav .num, nav .rodape { display: none; }
+      .col-autor, .col-cat, .col-nota { display: none; }
+      .detalhe { grid-template-columns: 1fr; }
+      .capa { width: 110px; }
+      .grade2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <nav>
+      <div class="marca">
+        <svg width="30" height="30" viewBox="0 0 100 100" aria-hidden="true"><path d="M8 20h38q4 0 4 4v62q0-4-4-4H8zM92 20H54q-4 0-4 4v62q0-4 4-4h38z" fill="#4dd8e6"/></svg>
+        <div><b>NASUS</b><small>curador das suas leituras</small></div>
+      </div>
+      <ol id="menu"></ol>
+      <div class="rodape">teclas <kbd>1</kbd>–<kbd>7</kbd> trocam de tela · <kbd>?</kbd> ajuda</div>
+    </nav>
+    <main id="tela"></main>
+  </div>
+  <div id="modal"></div>
+  <div id="aviso" class="aviso" hidden></div>
+
+  <script>
+    "use strict";
+
+    // ── estado ─────────────────────────────────────
+    const MENU = [
+      { nome: "Biblioteca", aba: "todos" },
+      { nome: "Estante", aba: "shelf" },
+      { nome: "Quero ler", aba: "want" },
+      { nome: "Lendo agora", aba: "reading" },
+      { nome: "Estatísticas", tela: "stats" },
+      { nome: "Buscar online", tela: "busca" },
+      { nome: "Como usar", tela: "ajuda" },
+    ];
+    const ABAS = ["todos", "shelf", "reading", "want", "read", "abandoned"];
+    const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+    const e = {
+      tela: "biblioteca", aba: "todos", filtro: "", categoria: null, sel: 0,
+      livros: [], status: [], categorias: [],
+      detalhe: null, // { livro, notas, plano }
+      ano: new Date().getFullYear(), stats: null,
+      busca: "", resultados: [], buscaSel: 0, buscando: false, isbnFoto: null,
+    };
+
+    // ── utilidades ─────────────────────────────────
+    const $ = (s, r = document) => r.querySelector(s);
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const statusDe = (chave) => e.status.find((s) => s.chave === chave) || { chave, nome: chave, rotulo: chave, simbolo: "?" };
+    const estrelas = (n) => (n ? "★".repeat(n) + "☆".repeat(5 - n) : "");
+    const capaUrl = (isbn) => `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-M.jpg?default=false`;
+    const plural = (n, p) => `${n} ${p}${n === 1 ? "" : "s"}`;
+
+    async function api(metodo, caminho, corpo) {
+      const op = { method: metodo, headers: {} };
+      if (corpo instanceof Blob) op.body = corpo;
+      else if (corpo !== undefined) { op.body = JSON.stringify(corpo); op.headers["Content-Type"] = "application/json"; }
+      const r = await fetch(caminho, op);
+      const v = await r.json().catch(() => ({ erro: `erro ${r.status}` }));
+      if (!r.ok) throw new Error(v.erro || `erro ${r.status}`);
+      return v;
+    }
+
+    let timerAviso;
+    function avisar(texto, erro = false) {
+      const a = $("#aviso");
+      a.textContent = texto;
+      a.className = "aviso" + (erro ? " erro" : "");
+      a.hidden = false;
+      clearTimeout(timerAviso);
+      timerAviso = setTimeout(() => (a.hidden = true), erro ? 5000 : 2600);
+    }
+    // tenta: executa uma ação e mostra o erro em vez de deixar a página quieta
+    const tenta = (f) => async (...a) => { try { await f(...a); } catch (err) { avisar(err.message, true); } };
+
+    async function carregarLivros() {
+      const v = await api("GET", "/api/livros");
+      e.livros = v.livros;
+      e.status = v.status;
+      e.categorias = (await api("GET", "/api/categorias")).categorias;
+    }
+
+    function visiveis() {
+      const f = e.filtro.toLowerCase();
+      return e.livros.filter((b) =>
+        (e.aba === "todos" || b.status === e.aba) &&
+        (!e.categoria || b.categorias.includes(e.categoria)) &&
+        (!f || b.titulo.toLowerCase().includes(f) || b.autor.toLowerCase().includes(f) || b.categorias.some((c) => c.includes(f))));
+    }
+    const contagem = (aba) => e.livros.filter((b) => aba === "todos" || b.status === aba).length;
+
+    // ── menu ───────────────────────────────────────
+    function itemAtivo() {
+      if (e.tela === "biblioteca" || e.tela === "detalhe") return MENU.findIndex((m) => m.aba === e.aba);
+      return MENU.findIndex((m) => m.tela === e.tela);
+    }
+    function desenharMenu() {
+      const ativo = itemAtivo();
+      $("#menu").innerHTML = MENU.map((m, i) => `
+        <li><button data-menu="${i}" class="${i === ativo ? "ativo" : ""}">
+          <span class="num">${i + 1}</span>${esc(m.nome)}
+          ${m.aba ? `<span class="cont">${contagem(m.aba)}</span>` : ""}
+        </button></li>`).join("");
+    }
+    const irMenu = tenta(async (i) => {
+      const m = MENU[i];
+      if (!m) return;
+      if (m.aba) { e.aba = m.aba; e.sel = 0; e.tela = "biblioteca"; await carregarLivros(); }
+      else if (m.tela === "stats") await abrirStats(e.ano);
+      else e.tela = m.tela;
+      desenhar();
+      if (m.tela === "busca") $("#q")?.focus();
+    });
+
+    // ── telas ──────────────────────────────────────
+    // o endereço guarda a tela (#livro/3, #stats...): recarregar e o "voltar"
+    // do navegador funcionam
+    function hashAtual() {
+      if (e.tela === "detalhe") return `#livro/${e.detalhe.livro.id}`;
+      if (e.tela === "biblioteca") return e.aba === "todos" ? "#" : `#${e.aba}`;
+      return `#${e.tela}`;
+    }
+    async function seguirHash() {
+      const h = location.hash.slice(1);
+      const livro = h.match(/^livro\/(\d+)$/);
+      if (livro) {
+        e.detalhe = await api("GET", `/api/livro?id=${livro[1]}`);
+        e.tela = "detalhe";
+      } else if (h === "stats") await abrirStats(e.ano);
+      else if (h === "busca" || h === "ajuda") e.tela = h;
+      else {
+        e.tela = "biblioteca";
+        e.aba = ABAS.includes(h) ? h : "todos";
+        await carregarLivros();
+      }
+    }
+    window.addEventListener("hashchange", tenta(async () => {
+      if (location.hash === hashAtual() || (location.hash === "" && hashAtual() === "#")) return;
+      await seguirHash();
+      desenhar();
+    }));
+
+    function desenhar() {
+      if (hashAtual() !== (location.hash || "#")) history.pushState(null, "", hashAtual() === "#" ? location.pathname : hashAtual());
+      desenharMenu();
+      const t = $("#tela");
+      if (e.tela === "biblioteca") t.innerHTML = telaBiblioteca();
+      else if (e.tela === "detalhe") t.innerHTML = telaDetalhe();
+      else if (e.tela === "stats") t.innerHTML = telaStats();
+      else if (e.tela === "busca") t.innerHTML = telaBusca();
+      else t.innerHTML = telaAjuda();
+    }
+
+    function barra(p) {
+      if (p == null) return `<span class="dim">—</span>`;
+      const pct = Math.round(p * 100);
+      return `<div class="progresso"><div class="trilho"><div class="cheio" style="width:${pct}%"></div></div><span>${pct}%</span></div>`;
+    }
+
+    function telaBiblioteca() {
+      const lista = visiveis();
+      e.sel = Math.min(e.sel, Math.max(0, lista.length - 1));
+      const abas = ABAS.map((a) => {
+        const rot = a === "todos" ? "Todos" : statusDe(a).rotulo;
+        return `<button data-aba="${a}" class="${a === e.aba ? "ativo" : ""}">${esc(rot)} (${contagem(a)})</button>`;
+      }).join("");
+      const chips = e.categorias.map((c) => `<button class="chip ${c.nome === e.categoria ? "ativo" : ""}" data-cat="${esc(c.nome)}">${esc(c.nome)} <small>${c.livros}</small></button>`).join("");
+      const linhas = lista.map((b, i) => {
+        const st = statusDe(b.status);
+        const prog = b.progresso != null ? barra(b.progresso) : b.pagina_atual > 0 ? `<span class="dim">p. ${b.pagina_atual}</span>` : `<span class="dim">—</span>`;
+        return `<tr data-livro="${b.id}" class="${i === e.sel ? "sel" : ""}">
+          <td class="st-${b.status}" title="${esc(st.nome)}">${st.simbolo}</td>
+          <td class="titulo">${esc(b.titulo)}</td>
+          <td class="dim col-autor">${esc(b.autor)}</td>
+          <td class="dim col-cat">${esc(b.categorias.join(", "))}</td>
+          <td>${prog}</td>
+          <td class="estrelas col-nota">${estrelas(b.nota)}</td></tr>`;
+      }).join("");
+      const vazio = e.filtro || e.categoria ? "Nenhum livro bate com o filtro." : "Nenhum livro aqui. Tecle a para adicionar ou o para buscar online.";
+      return `
+        <h1>Biblioteca</h1>
+        <div class="abas">${abas}</div>
+        <div class="barra-ferr">
+          <input class="filtro" id="filtro" placeholder="filtrar por título, autor ou categoria  ( / )" value="${esc(e.filtro)}">
+          <button class="btn prim" data-acao="novo">Adicionar<kbd>a</kbd></button>
+          <button class="btn" data-acao="ir-busca">Buscar online<kbd>o</kbd></button>
+        </div>
+        ${chips ? `<div class="chips">${chips}</div>` : ""}
+        ${lista.length ? `<table><thead><tr><th></th><th>TÍTULO</th><th class="col-autor">AUTOR</th><th class="col-cat">CATEGORIAS</th><th>PROGRESSO</th><th class="col-nota">NOTA</th></tr></thead><tbody>${linhas}</tbody></table>`
+          : `<div class="vazio">${vazio}</div>`}`;
+    }
+
+    function telaDetalhe() {
+      const { livro: b, notas, plano } = e.detalhe;
+      const st = statusDe(b.status);
+      const capa = b.isbn ? `<img src="${capaUrl(b.isbn)}" alt="" onerror="this.replaceWith('📕')">` : "";
+      const paginas = b.paginas ? `${b.pagina_atual} de ${b.paginas}` : b.pagina_atual ? `${b.pagina_atual} (total desconhecido)` : "—";
+      const statusBtns = e.status.map((s, i) => `<button class="st-${s.chave} ${s.chave === b.status ? "ativo" : ""}" data-status="${s.chave}" title="${i + 1}">${s.simbolo} ${esc(s.nome)}</button>`).join("");
+      const estr = [1, 2, 3, 4, 5].map((n) => `<button class="${n <= b.nota ? "on" : ""}" data-nota="${n}" title="${n} (clique de novo para tirar)">★</button>`).join("");
+      const listaNotas = notas.length ? notas.map((n) => `
+        <li><span class="pg">${n.pagina ? "p. " + n.pagina : ""}</span>
+          <span class="corpo ${n.tipo === "citacao" ? "citacao" : ""}">${esc(n.texto)}</span>
+          <button class="x" data-rm-nota="${n.id}" title="remover">✕</button></li>`).join("")
+        : `<li class="dim">Nenhuma nota ainda: n para nota, c para citação.</li>`;
+      const planoHtml = plano ? `
+        <div class="painel">
+          🗓 <b>${plano.paginas_dia} pág/dia</b> · ${plano.inicio} → ${plano.fim} (${plural(plano.dias, "dia")})
+          <div class="situacao">${plano.situacao.startsWith("⚠") ? `<span style="color:var(--amar)">${esc(plano.situacao)}</span>` : esc(plano.situacao)}
+            ${b.status !== "read" ? ` · hoje: até a pág. ${plano.meta_hoje}` : ""}</div>
+          <div class="acoes" style="margin-top:10px">
+            <button class="btn" data-acao="plano">Editar plano<kbd>l</kbd></button>
+            <button class="btn" data-acao="recalcular">Recalcular a partir de hoje<kbd>L</kbd></button>
+          </div>
+        </div>` : `<div class="dim">Sem plano. ${b.paginas ? `<button class="btn" data-acao="plano">Criar plano<kbd>l</kbd></button>` : "Informe o total de páginas (e) para criar um."}</div>`;
+      return `
+        <h1><span class="migalha">Biblioteca ›</span> Detalhes</h1>
+        <div class="detalhe">
+          <div class="capa">${capa || "📕"}</div>
+          <div class="info">
+            <h1>${esc(b.titulo)}</h1>
+            <div class="autor">por ${esc(b.autor || "autor desconhecido")}</div>
+            <dl class="campos">
+              <dt>Status</dt><dd><div class="status-btns">${statusBtns}</div></dd>
+              <dt>Páginas</dt><dd>${paginas}${b.isbn ? ` <span class="dim">· ISBN ${esc(b.isbn)}</span>` : ""}</dd>
+              <dt>Período</dt><dd>${b.inicio || "—"} → ${b.fim || "—"}</dd>
+              <dt>Nota</dt><dd class="estrelas-btn">${estr}</dd>
+              <dt>Categorias</dt><dd>${b.categorias.length ? esc(b.categorias.join(" · ")) : `<span class="dim">— (e para pôr)</span>`}</dd>
+            </dl>
+            <div style="margin-bottom:12px">${barra(b.progresso)}</div>
+            <form class="pagina-form" id="form-pagina">
+              <input id="pagina" type="number" min="0" value="${b.pagina_atual}" aria-label="página atual">
+              <button class="btn prim">Registrar página<kbd>p</kbd></button>
+            </form>
+            <div class="acoes" style="margin-top:12px">
+              <button class="btn" data-acao="editar">Editar<kbd>e</kbd></button>
+              <button class="btn perigo" data-acao="remover">Remover<kbd>d</kbd></button>
+              <button class="btn" data-acao="voltar">Voltar<kbd>Esc</kbd></button>
+            </div>
+          </div>
+        </div>
+        ${b.resenha ? `<h2>Resenha</h2><div class="painel" style="white-space:pre-wrap">${esc(b.resenha)}</div>` : ""}
+        <h2>Plano de leitura</h2>${planoHtml}
+        <h2>Notas e citações (${notas.length})</h2>
+        <ul class="notas">${listaNotas}</ul>
+        <form class="nova-nota" id="form-nota">
+          <select id="tipo-nota"><option value="nota">nota</option><option value="citacao">citação</option></select>
+          <textarea id="texto-nota" rows="2" placeholder="p.115 no começo marca a página; sem isso, vale a atual"></textarea>
+          <button class="btn prim">Salvar</button>
+        </form>`;
+    }
+
+    function telaStats() {
+      const s = e.stats;
+      const meta = s.meta ? `
+        <div class="painel">
+          <b>${s.lidos} de ${s.meta} livros</b>${s.lidos >= s.meta ? " — meta batida! 🎉" : ` <span class="dim">· faltam ${s.meta - s.lidos}</span>`}
+          <div class="meta-trilho"><div style="width:${Math.min(100, (s.lidos * 100) / s.meta)}%"></div></div>
+          <button class="btn" data-acao="meta">Mudar a meta<kbd>g</kbd></button>
+        </div>` : `<div class="painel dim">Sem meta para ${s.ano}. <button class="btn" data-acao="meta">Definir meta<kbd>g</kbd></button></div>`;
+      const maior = Math.max(1, ...s.por_mes);
+      const meses = s.por_mes.map((n, i) => `
+        <div class="col"><span class="v">${n || ""}</span>
+          <div class="bar ${n ? "" : "zero"}" style="height:${(n / maior) * 120}px"></div><small>${MESES[i]}</small></div>`).join("");
+      const maiorCat = Math.max(1, ...s.por_categoria.map((c) => c.livros));
+      const cats = s.por_categoria.length ? `<ul class="cats">${s.por_categoria.slice(0, 8).map((c) => `
+        <li><span>${esc(c.nome)}</span><div class="b" style="width:${(c.livros / maiorCat) * 100}%"></div><span class="dim">${c.livros}</span></li>`).join("")}</ul>`
+        : `<div class="dim">Nenhum livro lido com categoria neste ano.</div>`;
+      const media = s.nota_media != null ? s.nota_media.toFixed(1).replace(".", ",") + " ★" : "—";
+      return `
+        <h1>Estatísticas <span class="migalha">›</span>
+          <button class="btn" data-ano="${s.ano - 1}">◀</button> ${s.ano} <button class="btn" data-ano="${s.ano + 1}">▶</button></h1>
+        ${meta}
+        <h2>Números</h2>
+        <div class="numeros">
+          <div class="painel"><b>${s.lidos}</b><span>livros lidos</span></div>
+          <div class="painel"><b>${s.paginas.toLocaleString("pt-BR")}</b><span>páginas lidas</span></div>
+          <div class="painel"><b>${media}</b><span>nota média</span></div>
+          <div class="painel"><b>${s.lendo}</b><span>lendo agora</span></div>
+        </div>
+        <h2>Livros terminados por mês</h2>
+        <div class="painel"><div class="meses">${meses}</div></div>
+        <h2>Mais lidas por categoria</h2>
+        <div class="painel">${cats}</div>`;
+    }
+
+    function telaBusca() {
+      const lista = e.resultados.map((r, i) => `
+        <li class="${i === e.buscaSel ? "sel" : ""}">
+          <div class="txt"><b>${esc(r.titulo)}</b>
+            <span class="dim">${esc(r.autor || "autor desconhecido")}${r.ano ? " · " + r.ano : ""}${r.paginas ? " · " + r.paginas + " p." : ""}${r.isbn ? " · ISBN " + esc(r.isbn) : ""}</span>
+            ${r.categorias.length ? `<div class="dim">🏷 ${esc(r.categorias.join(", "))}</div>` : ""}</div>
+          ${r.ja_tenho ? `<button class="badge" data-livro-abrir="${r.ja_tenho}">já na biblioteca #${r.ja_tenho}</button>`
+            : `<button class="btn prim" data-adicionar="${i}">Adicionar</button>`}
+        </li>`).join("");
+      return `
+        <h1>Buscar online</h1>
+        <form class="busca-form" id="form-busca">
+          <input id="q" placeholder="título ou ISBN (BrasilAPI + Open Library)" value="${esc(e.busca)}">
+          <button class="btn prim">${e.buscando ? "Buscando…" : "Buscar"}</button>
+          <label class="btn" style="margin:0;color:inherit">📷 Foto do código de barras
+            <input type="file" id="foto" accept="image/*" capture="environment" hidden></label>
+        </form>
+        <div class="dica">↑↓ escolhem · Enter adiciona o selecionado (abre o formulário já preenchido)</div>
+        ${e.isbnFoto ? `<div class="dica">📷 ISBN lido da foto: ${esc(e.isbnFoto)}</div>` : ""}
+        <ul class="resultados">${lista}</ul>`;
+    }
+
+    function telaAjuda() {
+      const linhas = [
+        ["Menu", "1-7 trocam de tela · ? esta ajuda"],
+        ["Biblioteca", "←→ trocam a aba · ↑↓ movem · Enter abre · a adiciona · e edita · d remove · / filtra · c limpa a categoria · o busca online"],
+        ["Detalhes", "p página atual · 1-5 status · r nota · l plano · L recalcular plano · n nota · c citação · e editar · d remover · Esc voltar"],
+        ["Estatísticas", "←→ trocam o ano · g define a meta (0 remove)"],
+        ["Buscar online", "digite ISBN ou título e Enter · ↑↓ escolhem · Enter adiciona · ou envie a foto do código de barras"],
+        ["Formulários", "Enter salva · Esc cancela"],
+      ];
+      return `
+        <h1>Como usar</h1>
+        <div class="painel" style="max-width:860px">
+          <p>Todo livro adicionado vai para a <b>Estante</b>; mude o status para <b>Quero ler</b> para pô-lo na fila.
+             Registrar a página de um livro da estante ou da fila já o move para <b>Lendo</b>; ao chegar na última página, o Nasus oferece marcar como lido.</p>
+          <p>Plano de leitura: informe o início e as páginas por dia; o Nasus calcula a data de fim, a meta de hoje e se você está à frente ou atrás.</p>
+          <p>Notas e citações aceitam a página no começo: <code>p.115 texto</code>. Categorias vão no formulário, separadas por vírgula.</p>
+          <dl class="atalhos">${linhas.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join("")}</dl>
+          <p class="dim">Esta página só abre no seu computador (127.0.0.1); os dados são os mesmos do app de terminal e do bot.</p>
+        </div>`;
+    }
+
+    // ── ações ──────────────────────────────────────
+    const abrirDetalhe = tenta(async (id) => {
+      e.detalhe = await api("GET", `/api/livro?id=${id}`);
+      e.tela = "detalhe";
+      desenhar();
+      window.scrollTo(0, 0);
+    });
+    async function recarregarDetalhe() {
+      e.detalhe = await api("GET", `/api/livro?id=${e.detalhe.livro.id}`);
+      await carregarLivros();
+      desenhar();
+    }
+    async function abrirStats(ano) {
+      e.stats = await api("GET", `/api/estatisticas?ano=${ano}`);
+      e.ano = e.stats.ano;
+      e.tela = "stats";
+    }
+    const voltar = tenta(async () => {
+      e.tela = "biblioteca";
+      await carregarLivros();
+      desenhar();
+    });
+
+    function modal(html, aoAbrir) {
+      $("#modal").innerHTML = `<div class="fundo"><div class="modal" role="dialog">${html}</div></div>`;
+      const m = $("#modal .modal");
+      $("#modal .fundo").addEventListener("mousedown", (ev) => { if (ev.target.classList.contains("fundo")) fecharModal(); });
+      m.querySelector("[data-fechar]")?.addEventListener("click", fecharModal);
+      aoAbrir?.(m);
+      m.querySelector("input, textarea, select, button")?.focus();
+    }
+    const fecharModal = () => ($("#modal").innerHTML = "");
+    const modalAberto = () => !!$("#modal .fundo");
+
+    function confirmar(texto, acao) {
+      modal(`<h3>Confirmar</h3><p>${esc(texto)}</p>
+        <div class="rodape"><button class="btn" data-fechar>Não <kbd>n</kbd></button><button class="btn prim" id="sim">Sim <kbd>s</kbd></button></div>`,
+        (m) => {
+          const sim = tenta(async () => { fecharModal(); await acao(); });
+          m.querySelector("#sim").addEventListener("click", sim);
+          m.addEventListener("keydown", (ev) => {
+            if (ev.key === "s" || ev.key === "S") { ev.preventDefault(); sim(); }
+            if (ev.key === "n" || ev.key === "N") { ev.preventDefault(); fecharModal(); }
+          });
+        });
+      $("#sim").focus();
+    }
+
+    function formLivro(b) {
+      const novo = !b.id;
+      const sugestoes = e.categorias.length ? `existentes: ${e.categorias.map((c) => esc(c.nome)).join(", ")}` : "separadas por vírgula: romance, filosofia";
+      const opcoes = e.status.map((s) => `<option value="${s.chave}" ${s.chave === (b.status || "shelf") ? "selected" : ""}>${s.simbolo} ${esc(s.nome)}</option>`).join("");
+      modal(`
+        <h3>${novo ? "Novo livro" : "Editar livro"}</h3>
+        <form id="form-livro">
+          <label for="f-titulo">Título *</label><input id="f-titulo" value="${esc(b.titulo)}" required>
+          <label for="f-autor">Autor</label><input id="f-autor" value="${esc(b.autor)}">
+          <div class="grade2">
+            <div><label for="f-isbn">ISBN</label><input id="f-isbn" value="${esc(b.isbn)}"></div>
+            <div><label for="f-paginas">Páginas</label><input id="f-paginas" type="number" min="0" value="${b.paginas || ""}"></div>
+          </div>
+          <label for="f-cats">Categorias</label><input id="f-cats" value="${esc((b.categorias || []).join(", "))}">
+          <div class="dica">${sugestoes}</div>
+          <label for="f-status">Status</label><select id="f-status">${opcoes}</select>
+          <label for="f-resenha">Resenha</label><textarea id="f-resenha">${esc(b.resenha)}</textarea>
+          <div class="rodape"><button type="button" class="btn" data-fechar>Cancelar <kbd>Esc</kbd></button><button class="btn prim">Salvar <kbd>Enter</kbd></button></div>
+        </form>`, (m) => {
+        m.querySelector("#form-livro").addEventListener("submit", tenta(async (ev) => {
+          ev.preventDefault();
+          const v = (id) => m.querySelector(id).value;
+          const r = await api("POST", "/api/livro", {
+            id: b.id || null, titulo: v("#f-titulo"), autor: v("#f-autor"), isbn: v("#f-isbn"),
+            paginas: parseInt(v("#f-paginas") || "0", 10), categorias: v("#f-cats"), status: v("#f-status"), resenha: v("#f-resenha"),
+          });
+          fecharModal();
+          await carregarLivros();
+          e.detalhe = r;
+          e.tela = "detalhe";
+          desenhar();
+          avisar(novo ? "Livro adicionado." : "Livro atualizado.");
+        }));
+      });
+    }
+
+    function formPlano() {
+      const { livro: b, plano: p } = e.detalhe;
+      if (!b.paginas) return avisar("informe o total de páginas (e) antes de criar um plano", true);
+      const hoje = new Date().toLocaleDateString("pt-BR");
+      const inicial = p ? p.pagina_inicial : b.pagina_atual;
+      modal(`
+        <h3>Plano de leitura</h3>
+        <form id="form-plano">
+          <div class="grade2">
+            <div><label for="p-inicio">Início (dd/mm/aaaa)</label><input id="p-inicio" value="${esc(p ? p.inicio : hoje)}"></div>
+            <div><label for="p-dia">Páginas por dia</label><input id="p-dia" type="number" min="0" value="${p ? p.paginas_dia : ""}"></div>
+          </div>
+          <div class="dica" id="previa"></div>
+          <div class="rodape"><button type="button" class="btn" data-fechar>Cancelar</button><button class="btn prim">Salvar</button></div>
+        </form>`, (m) => {
+        const previa = () => {
+          const n = parseInt(m.querySelector("#p-dia").value || "", 10);
+          const [d, mes, a] = m.querySelector("#p-inicio").value.split("/").map(Number);
+          const el = m.querySelector("#previa");
+          if (n === 0) return (el.textContent = "0 páginas por dia remove o plano");
+          if (!n || !a) return (el.textContent = "");
+          const restantes = Math.max(0, b.paginas - inicial);
+          const dias = Math.max(1, Math.ceil(restantes / n));
+          const fim = new Date(a, mes - 1, d + dias - 1).toLocaleDateString("pt-BR");
+          el.textContent = `${inicial ? `da pág. ${inicial}: ` : ""}${restantes} páginas a ${n}/dia → termina em ${fim} (${plural(dias, "dia")})`;
+        };
+        m.addEventListener("input", previa);
+        previa();
+        m.querySelector("#p-dia").focus();
+        m.querySelector("#form-plano").addEventListener("submit", tenta(async (ev) => {
+          ev.preventDefault();
+          e.detalhe = await api("POST", "/api/plano", {
+            livro: b.id, inicio: m.querySelector("#p-inicio").value, paginas_dia: parseInt(m.querySelector("#p-dia").value || "0", 10),
+          });
+          fecharModal();
+          await carregarLivros();
+          desenhar();
+          avisar(e.detalhe.plano ? `Plano salvo: termina em ${e.detalhe.plano.fim}.` : "Plano removido.");
+        }));
+      });
+    }
+
+    function formMeta() {
+      const s = e.stats;
+      modal(`
+        <h3>Meta de livros para ${s.ano}</h3>
+        <form id="form-meta"><input id="m-livros" type="number" min="0" value="${s.meta || ""}" placeholder="0 remove a meta">
+          <div class="rodape"><button type="button" class="btn" data-fechar>Cancelar</button><button class="btn prim">Salvar</button></div></form>`, (m) => {
+        m.querySelector("#form-meta").addEventListener("submit", tenta(async (ev) => {
+          ev.preventDefault();
+          await api("POST", "/api/meta", { ano: s.ano, livros: parseInt(m.querySelector("#m-livros").value || "0", 10) });
+          fecharModal();
+          await abrirStats(s.ano);
+          desenhar();
+        }));
+      });
+    }
+
+    const registrarPagina = tenta(async (pagina) => {
+      const b = e.detalhe.livro;
+      const r = await api("POST", "/api/livro/pagina", { id: b.id, pagina });
+      await recarregarDetalhe();
+      if (r.chegou_ao_fim) confirmar("Chegou na última página! Marcar como lido?", () => mudarStatus("read"));
+      else avisar("Progresso salvo.");
+    });
+    const mudarStatus = tenta(async (status) => {
+      await api("POST", "/api/livro/status", { id: e.detalhe.livro.id, status });
+      await recarregarDetalhe();
+      const s = statusDe(status);
+      avisar(`Status: ${s.simbolo} ${s.nome}`);
+    });
+    const avaliar = tenta(async (n) => {
+      const b = e.detalhe.livro;
+      await api("POST", "/api/livro/avaliar", { id: b.id, nota: n === b.nota ? 0 : n });
+      await recarregarDetalhe();
+    });
+    function removerLivro(id, titulo) {
+      confirmar(`Remover “${titulo}” e suas notas?`, async () => {
+        await api("POST", "/api/livro/remover", { id });
+        e.tela = "biblioteca";
+        await carregarLivros();
+        desenhar();
+        avisar("Livro removido.");
+      });
+    }
+    const recalcular = () => confirmar("Refazer o plano a partir de hoje e da página atual?", async () => {
+      e.detalhe = await api("POST", "/api/plano/recalcular", { id: e.detalhe.livro.id });
+      desenhar();
+      avisar(`Plano recalculado: termina em ${e.detalhe.plano.fim}.`);
+    });
+
+    const buscar = tenta(async (q) => {
+      e.busca = q.trim();
+      if (!e.busca) return;
+      e.buscando = true; e.isbnFoto = null; desenhar();
+      try { e.resultados = (await api("GET", `/api/buscar?q=${encodeURIComponent(e.busca)}`)).resultados; }
+      finally { e.buscando = false; }
+      e.buscaSel = 0;
+      desenhar();
+      if (!e.resultados.length) avisar("Nada encontrado.", true);
+    });
+    const enviarFoto = tenta(async (arquivo) => {
+      avisar("Lendo o código de barras…");
+      const r = await api("POST", "/api/foto", arquivo);
+      if (!r.isbn) return avisar("Não achei o código de barras de um livro na foto. Tente mais perto, com boa luz e o código reto.", true);
+      e.isbnFoto = r.isbn; e.busca = r.isbn; e.resultados = r.resultados; e.buscaSel = 0;
+      desenhar();
+      if (!r.resultados.length) avisar(`ISBN ${r.isbn} lido, mas nada encontrado.`, true);
+    });
+    function adicionarResultado(i) {
+      const r = e.resultados[i];
+      if (!r) return;
+      if (r.ja_tenho) return abrirDetalhe(r.ja_tenho);
+      formLivro({ titulo: r.titulo, autor: r.autor, isbn: r.isbn, paginas: r.paginas, categorias: r.categorias, status: "shelf" });
+    }
+
+    // ── eventos ────────────────────────────────────
+    document.addEventListener("click", (ev) => {
+      const el = ev.target.closest("[data-menu],[data-aba],[data-cat],[data-livro],[data-acao],[data-status],[data-nota],[data-rm-nota],[data-ano],[data-adicionar],[data-livro-abrir]");
+      if (!el) return;
+      const d = el.dataset;
+      if (d.menu) return irMenu(+d.menu);
+      if (d.aba) { e.aba = d.aba; e.sel = 0; return desenhar(); }
+      if (d.cat) { e.categoria = e.categoria === d.cat ? null : d.cat; e.sel = 0; return desenhar(); }
+      if (d.livro) return abrirDetalhe(+d.livro);
+      if (d.livroAbrir) return abrirDetalhe(+d.livroAbrir);
+      if (d.status) return mudarStatus(d.status);
+      if (d.nota) return avaliar(+d.nota);
+      if (d.ano) return tenta(async () => { await abrirStats(+d.ano); desenhar(); })();
+      if (d.adicionar) return adicionarResultado(+d.adicionar);
+      if (d.rmNota) return confirmar("Remover esta nota?", async () => { await api("POST", "/api/nota/remover", { id: +d.rmNota }); await recarregarDetalhe(); });
+      const b = e.detalhe?.livro;
+      switch (d.acao) {
+        case "novo": return formLivro({ status: e.aba === "todos" ? "shelf" : e.aba });
+        case "ir-busca": return irMenu(5);
+        case "editar": return formLivro(b);
+        case "remover": return removerLivro(b.id, b.titulo);
+        case "voltar": return voltar();
+        case "plano": return formPlano();
+        case "recalcular": return recalcular();
+        case "meta": return formMeta();
+      }
+    });
+
+    document.addEventListener("input", (ev) => {
+      if (ev.target.id === "filtro") {
+        e.filtro = ev.target.value; e.sel = 0;
+        const pos = ev.target.selectionStart;
+        desenhar();
+        const f = $("#filtro"); f.focus(); f.setSelectionRange(pos, pos);
+      }
+    });
+
+    document.addEventListener("submit", (ev) => {
+      if (ev.target.id === "form-pagina") {
+        ev.preventDefault();
+        registrarPagina(parseInt($("#pagina").value || "0", 10));
+      } else if (ev.target.id === "form-nota") {
+        ev.preventDefault();
+        tenta(async () => {
+          const texto = $("#texto-nota").value;
+          const r = await api("POST", "/api/nota", { livro: e.detalhe.livro.id, tipo: $("#tipo-nota").value, texto });
+          await recarregarDetalhe();
+          avisar(r.nota.tipo === "citacao" ? "Citação salva." : "Nota salva.");
+        })();
+      } else if (ev.target.id === "form-busca") {
+        ev.preventDefault();
+        const q = $("#q").value.trim();
+        // Enter de novo na mesma busca adiciona o selecionado, como na TUI
+        if (q === e.busca && e.resultados.length) adicionarResultado(e.buscaSel);
+        else buscar(q);
+      }
+    });
+
+    document.addEventListener("change", (ev) => {
+      if (ev.target.id === "foto" && ev.target.files[0]) enviarFoto(ev.target.files[0]);
+    });
+
+    document.addEventListener("keydown", (ev) => {
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      if (modalAberto()) {
+        if (ev.key === "Escape") fecharModal();
+        return;
+      }
+      const digitando = ev.target instanceof Element && ev.target.matches("input, textarea, select");
+      if (digitando) {
+        if (ev.key === "Escape") {
+          if (ev.target.id === "filtro" && e.filtro) { e.filtro = ""; desenhar(); }
+          ev.target.blur();
+        }
+        if (e.tela === "busca" && ev.target.id === "q" && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) {
+          ev.preventDefault();
+          e.buscaSel = Math.max(0, Math.min(e.resultados.length - 1, e.buscaSel + (ev.key === "ArrowDown" ? 1 : -1)));
+          const q = $("#q").value; desenhar(); const i = $("#q"); i.focus(); i.value = q;
+        }
+        return;
+      }
+      const k = ev.key;
+      if (k === "?") return irMenu(6);
+      if (e.tela !== "detalhe" && /^[1-7]$/.test(k)) return irMenu(+k - 1);
+
+      if (e.tela === "biblioteca") {
+        const lista = visiveis();
+        const i = ABAS.indexOf(e.aba);
+        if (k === "ArrowDown" || k === "j") { ev.preventDefault(); e.sel = Math.min(lista.length - 1, e.sel + 1); desenhar(); }
+        else if (k === "ArrowUp" || k === "k") { ev.preventDefault(); e.sel = Math.max(0, e.sel - 1); desenhar(); }
+        else if (k === "ArrowRight" || k === "l") { e.aba = ABAS[(i + 1) % ABAS.length]; e.sel = 0; desenhar(); }
+        else if (k === "ArrowLeft" || k === "h") { e.aba = ABAS[(i + ABAS.length - 1) % ABAS.length]; e.sel = 0; desenhar(); }
+        else if (k === "Enter" && lista[e.sel]) abrirDetalhe(lista[e.sel].id);
+        else if (k === "a") formLivro({ status: e.aba === "todos" ? "shelf" : e.aba });
+        else if (k === "e" && lista[e.sel]) formLivro(lista[e.sel]);
+        else if (k === "d" && lista[e.sel]) removerLivro(lista[e.sel].id, lista[e.sel].titulo);
+        else if (k === "/") { ev.preventDefault(); $("#filtro").focus(); }
+        else if (k === "c" && e.categoria) { e.categoria = null; desenhar(); }
+        else if (k === "o") irMenu(5);
+        else if (k === "Escape") { if (e.filtro || e.categoria) { e.filtro = ""; e.categoria = null; desenhar(); } }
+        $("tr.sel")?.scrollIntoView({ block: "nearest" });
+      } else if (e.tela === "detalhe") {
+        const b = e.detalhe.livro;
+        if (k === "Escape" || k === "Backspace") voltar();
+        else if (/^[1-5]$/.test(k)) mudarStatus(e.status[+k - 1].chave);
+        else if (k === "p") { ev.preventDefault(); $("#pagina").select(); }
+        else if (k === "r") { const n = parseInt(prompt("Nota (0 a 5)", b.nota) ?? "", 10); if (n >= 0 && n <= 5) avaliar(n === b.nota ? n : n); }
+        else if (k === "n" || k === "c") { ev.preventDefault(); $("#tipo-nota").value = k === "c" ? "citacao" : "nota"; $("#texto-nota").focus(); }
+        else if (k === "l") formPlano();
+        else if (k === "L" && e.detalhe.plano) recalcular();
+        else if (k === "e") formLivro(b);
+        else if (k === "d") removerLivro(b.id, b.titulo);
+      } else if (e.tela === "stats") {
+        if (k === "ArrowLeft" || k === "ArrowRight") tenta(async () => { await abrirStats(e.ano + (k === "ArrowLeft" ? -1 : 1)); desenhar(); })();
+        else if (k === "g") formMeta();
+      } else if (e.tela === "busca") {
+        if (k === "/" || k === "o") { ev.preventDefault(); $("#q").focus(); }
+      }
+    });
+
+    // ── início ─────────────────────────────────────
+    tenta(async () => { await carregarLivros(); await seguirHash(); desenhar(); })();
+  </script>
+</body>
+
+</html>

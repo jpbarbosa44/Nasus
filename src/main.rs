@@ -8,6 +8,7 @@ mod input;
 mod model;
 mod openlibrary;
 mod ui;
+mod web;
 
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ use app::App;
 use db::Db;
 
 const USO: &str = "uso: nasus            abre o app no terminal
+     nasus web ...    abre a interface no navegador (nasus web --help)
      nasus bot ...    bot do Telegram (nasus bot --help)";
 
 fn main() -> Result<()> {
@@ -27,8 +29,9 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         None => {}
         Some("bot") => return bot::rodar(&caminho, &args[1..]),
+        Some("web" | "--web") => return web::rodar(&caminho, &args[1..]),
         Some("-h" | "--help" | "ajuda") => {
-            println!("{USO}\n\n{}", bot::USO);
+            println!("{USO}\n\n{}\n\n{}", web::USO, bot::USO);
             return Ok(());
         }
         Some(outro) => bail!("comando desconhecido: {outro}\n\n{USO}"),

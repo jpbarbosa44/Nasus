@@ -103,10 +103,8 @@ pub fn desenhar(f: &mut Frame, app: &App) {
     }
     if let Some((pessoa, desde)) = &b.emprestado {
         let dias = (Local::now().date_naive() - *desde).num_days();
-        linhas.push(campo(
-            "Emprestado",
-            Span::styled(format!("↗ com {pessoa} desde {} ({})", desde.format("%d/%m"), plural(dias, "dia")), cores::AMAR),
-        ));
+        let desde = if dias == 0 { "desde hoje".to_string() } else { format!("desde {} ({})", desde.format("%d/%m"), plural(dias, "dia")) };
+        linhas.push(campo("Emprestado", Span::styled(format!("↗ com {pessoa} {desde} · m devolvido"), cores::AMAR)));
     }
     if let Some((r, fim)) = app.ritmo {
         let mut t = format!("{r:.0} pág/dia");

@@ -20,7 +20,7 @@ pub fn desenhar(f: &mut Frame, app: &App) {
         f,
         app,
         Line::styled(format!(" Estatísticas › {}", s.ano), cores::TITULO),
-        "←→ ano · g definir meta · Esc voltar · ? ajuda",
+        "←→ ano · g definir meta · r retrospectiva · Esc voltar · ? ajuda",
     );
     let altura_mapa = if meio.height >= 25 { 9 } else { 0 };
     let [meta, nums, mapa, grafico] = Layout::vertical([

@@ -182,6 +182,14 @@
     .calor i.n4 { background: var(--cy); }
     .ritmo { color: var(--cy); }
     .emp { color: var(--amar); }
+    .retro { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .cartao .rot { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+    .cartao b { color: var(--cy); font-size: 19px; overflow-wrap: anywhere; }
+    .cartao.grande { grid-column: 1 / -1; }
+    .cartao.grande b { font-size: 34px; }
+    .cit-retro { margin: 0 0 18px; padding: 16px 20px; border-left: 3px solid var(--cy); background: var(--painel); border-radius: 0 var(--r) var(--r) 0; font-size: 17px; }
+    .cit-retro cite { display: block; margin-top: 8px; color: var(--dim); font-style: normal; font-size: 14px; }
     .plano-linha { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
     .plano-linha > div { width: 150px; }
     .situacao { margin-top: 8px; }
@@ -335,7 +343,7 @@
     // ── menu ───────────────────────────────────────
     function itemAtivo() {
       if (e.tela === "biblioteca" || e.tela === "detalhe") return MENU.findIndex((m) => m.aba === e.aba);
-      return MENU.findIndex((m) => m.tela === e.tela);
+      return MENU.findIndex((m) => m.tela === (e.tela === "retro" ? "stats" : e.tela));
     }
     function desenharMenu() {
       const ativo = itemAtivo();
@@ -360,6 +368,7 @@
     // do navegador funcionam
     function hashAtual() {
       if (e.tela === "detalhe") return `#livro/${e.detalhe.livro.id}`;
+      if (e.tela === "retro") return `#retrospectiva/${e.retro.ano}`;
       if (e.tela === "biblioteca") return e.aba === "todos" ? "#" : `#${e.aba}`;
       return `#${e.tela}`;
     }
@@ -369,7 +378,8 @@
       if (livro) {
         e.detalhe = await api("GET", `/api/livro?id=${livro[1]}`);
         e.tela = "detalhe";
-      } else if (h === "stats") await abrirStats(e.ano);
+      } else if (h.startsWith("retrospectiva")) await abrirRetro(+h.split("/")[1] || e.ano);
+      else if (h === "stats") await abrirStats(e.ano);
       else if (h === "busca" || h === "ajuda") e.tela = h;
       else {
         e.tela = "biblioteca";
@@ -390,6 +400,7 @@
       if (e.tela === "biblioteca") t.innerHTML = telaBiblioteca();
       else if (e.tela === "detalhe") t.innerHTML = telaDetalhe();
       else if (e.tela === "stats") t.innerHTML = telaStats();
+      else if (e.tela === "retro") t.innerHTML = telaRetro();
       else if (e.tela === "busca") t.innerHTML = telaBusca();
       else t.innerHTML = telaAjuda();
     }
@@ -523,6 +534,33 @@
         <div class="calor">${cels}</div>`;
     }
 
+    function telaRetro() {
+      const r = e.retro;
+      const cab = `<h1><span class="migalha">Estatísticas ›</span> Retrospectiva
+          <button class="btn" data-retro="${r.ano - 1}">◀</button> ${r.ano} <button class="btn" data-retro="${r.ano + 1}">▶</button></h1>`;
+      if (!r.lidos && !r.dias_lendo) return cab + `<div class="painel dim">Nenhum livro terminado em ${r.ano} ainda.</div>`;
+      const cartao = (rotulo, valor, detalhe) => `<div class="cartao"><span class="rot">${rotulo}</span>
+        ${valor != null ? `<b>${esc(String(valor))}</b><span class="dim">${esc(detalhe || "")}</span>` : `<b class="dim">—</b>`}</div>`;
+      const n = (x, p) => plural(x, p);
+      const media = r.nota_media != null ? r.nota_media.toFixed(1).replace(".", ",") + " ★" : null;
+      return cab + `
+        <div class="retro">
+          <div class="cartao grande"><span class="rot">${r.ano} em livros</span><b>${n(r.lidos, "livro")}</b>
+            <span class="dim">${r.paginas.toLocaleString("pt-BR")} páginas</span></div>
+          ${cartao("Mais longo", r.mais_longo?.[0], r.mais_longo && `${r.mais_longo[1].toLocaleString("pt-BR")} páginas`)}
+          ${cartao("Mais rápido", r.mais_rapido?.[0], r.mais_rapido && `em ${n(r.mais_rapido[1], "dia")}`)}
+          ${cartao("Autor do ano", r.autor?.[0], r.autor && n(r.autor[1], "livro"))}
+          ${cartao("Categoria favorita", r.categoria?.[0], r.categoria && n(r.categoria[1], "livro"))}
+          ${cartao("Melhor mês", r.melhor_mes?.[0], r.melhor_mes && n(r.melhor_mes[1], "livro"))}
+          ${cartao("Nota média", media, r.cinco_estrelas.length ? `5 estrelas: ${r.cinco_estrelas.join(", ")}` : "")}
+          ${cartao("Dias lendo", r.dias_lendo ? n(r.dias_lendo, "dia") : null, `maior sequência: ${n(r.maior_sequencia, "dia")}`)}
+          ${cartao("Notas e citações", r.notas + r.citacoes || null, `${n(r.notas, "nota")} · ${r.citacoes === 1 ? "1 citação" : r.citacoes + " citações"}`)}
+        </div>
+        ${r.citacao ? `<blockquote class="cit-retro">“${esc(r.citacao.texto)}”<cite>— ${esc(r.citacao.livro)}</cite></blockquote>` : ""}
+        <div class="acoes"><button class="btn" data-acao="copiar-retro">Copiar como texto</button>
+          <button class="btn" data-acao="voltar-stats">Voltar<kbd>Esc</kbd></button></div>`;
+    }
+
     function telaStats() {
       const s = e.stats;
       const meta = s.meta ? `
@@ -542,7 +580,8 @@
       const media = s.nota_media != null ? s.nota_media.toFixed(1).replace(".", ",") + " ★" : "—";
       return `
         <h1>Estatísticas <span class="migalha">›</span>
-          <button class="btn" data-ano="${s.ano - 1}">◀</button> ${s.ano} <button class="btn" data-ano="${s.ano + 1}">▶</button></h1>
+          <button class="btn" data-ano="${s.ano - 1}">◀</button> ${s.ano} <button class="btn" data-ano="${s.ano + 1}">▶</button>
+          <button class="btn prim" data-retro="${s.ano}">🎉 Retrospectiva<kbd>r</kbd></button></h1>
         ${meta}
         <h2>Números</h2>
         <div class="numeros">
@@ -586,7 +625,7 @@
         ["Menu", "1-7 trocam de tela · ? esta ajuda"],
         ["Biblioteca", "←→ trocam a aba · ↑↓ movem · Enter abre · a adiciona · e edita · d remove · / filtra · c limpa a categoria · o busca online"],
         ["Detalhes", "p página atual · 1-5 status · r nota · l plano · L recalcular plano · n nota · c citação · m emprestar/devolver · e editar · d remover · Esc voltar"],
-        ["Estatísticas", "←→ trocam o ano · g define a meta (0 remove)"],
+        ["Estatísticas", "←→ trocam o ano · g define a meta (0 remove) · r retrospectiva do ano"],
         ["Buscar online", "digite ISBN ou título e Enter · ↑↓ escolhem · Enter adiciona · ou envie a foto do código de barras"],
         ["Formulários", "Enter salva · Esc cancela"],
       ];
@@ -626,6 +665,12 @@
       await carregarLivros();
       desenhar();
     }
+    async function abrirRetro(ano) {
+      e.retro = await api("GET", `/api/retrospectiva?ano=${ano}`);
+      e.ano = e.retro.ano;
+      e.tela = "retro";
+    }
+
     async function abrirStats(ano) {
       e.stats = await api("GET", `/api/estatisticas?ano=${ano}`);
       e.ano = e.stats.ano;
@@ -838,7 +883,7 @@
 
     // ── eventos ────────────────────────────────────
     document.addEventListener("click", (ev) => {
-      const el = ev.target.closest("[data-menu],[data-aba],[data-cat],[data-livro],[data-acao],[data-status],[data-nota],[data-rm-nota],[data-ano],[data-adicionar],[data-livro-abrir]");
+      const el = ev.target.closest("[data-menu],[data-aba],[data-cat],[data-livro],[data-acao],[data-status],[data-nota],[data-rm-nota],[data-ano],[data-retro],[data-adicionar],[data-livro-abrir]");
       if (!el) return;
       const d = el.dataset;
       if (d.menu) return irMenu(+d.menu);
@@ -850,6 +895,7 @@
       if (d.nota) return avaliar(+d.nota);
       if (d.ano) return tenta(async () => { await abrirStats(+d.ano); desenhar(); })();
       if (d.adicionar) return adicionarResultado(+d.adicionar);
+      if (d.retro) return tenta(async () => { await abrirRetro(+d.retro); desenhar(); })();
       if (d.rmNota) return confirmar("Remover esta nota?", async () => { await api("POST", "/api/nota/remover", { id: +d.rmNota }); await recarregarDetalhe(); });
       const b = e.detalhe?.livro;
       switch (d.acao) {
@@ -862,6 +908,8 @@
         case "recalcular": return recalcular();
         case "meta": return formMeta();
         case "emprestar": case "devolver": return emprestar();
+        case "voltar-stats": return tenta(async () => { await abrirStats(e.ano); desenhar(); })();
+        case "copiar-retro": return navigator.clipboard.writeText(e.retro.texto).then(() => avisar("Copiado."), () => avisar("Não deu para copiar.", true));
       }
     });
 
@@ -953,6 +1001,10 @@
       } else if (e.tela === "stats") {
         if (k === "ArrowLeft" || k === "ArrowRight") tenta(async () => { await abrirStats(e.ano + (k === "ArrowLeft" ? -1 : 1)); desenhar(); })();
         else if (k === "g") formMeta();
+        else if (k === "r") tenta(async () => { await abrirRetro(e.ano); desenhar(); })();
+      } else if (e.tela === "retro") {
+        if (k === "ArrowLeft" || k === "ArrowRight") tenta(async () => { await abrirRetro(e.ano + (k === "ArrowLeft" ? -1 : 1)); desenhar(); })();
+        else if (k === "Escape" || k === "r") tenta(async () => { await abrirStats(e.ano); desenhar(); })();
       } else if (e.tela === "busca") {
         if (k === "/" || k === "o") { ev.preventDefault(); $("#q").focus(); }
       }

@@ -18,7 +18,7 @@ use rusqlite::Connection;
 pub use backup::{backups, pasta_backups, restaurar};
 pub use emprestimos::Emprestimo;
 pub use historico::Sequencia;
-pub use stats::Estatisticas;
+pub use stats::{Estatisticas, MESES, Retrospectiva, citacoes};
 
 const MIGRACOES: &[&str] = &[r#"
 CREATE TABLE books (

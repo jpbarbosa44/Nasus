@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use chrono::{Local, Timelike};
+use chrono::{Datelike, Local, Timelike};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
@@ -40,6 +40,13 @@ struct Config {
     ultimo_lembrete: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     ultimo_resumo: String,
+    /// ano da última retrospectiva enviada (em 31/12)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    ultima_retrospectiva: i32,
+}
+
+fn is_zero(n: &i32) -> bool {
+    *n == 0
 }
 
 impl Config {
@@ -262,6 +269,16 @@ fn verificar_agenda(tg: &Telegram, cfg: &mut Config, caminho_cfg: &Path, nucleo:
             Err(e) => eprintln!("aviso: lembrete da noite: {e:#}"),
         }
         cfg.ultimo_resumo = chave;
+        mudou = true;
+    }
+    // no último dia do ano, junto com o lembrete da noite, vai a retrospectiva
+    let ultimo_dia = hoje.month() == 12 && hoje.day() == 31;
+    if agora.hour() >= HORA_NOITE && ultimo_dia && cfg.ultima_retrospectiva != hoje.year() {
+        match nucleo.retrospectiva(hoje.year()) {
+            Ok(r) => enviar(tg, cfg.chat_id, &r),
+            Err(e) => eprintln!("aviso: retrospectiva: {e:#}"),
+        }
+        cfg.ultima_retrospectiva = hoje.year();
         mudou = true;
     }
     if mudou && let Err(e) = cfg.salvar(caminho_cfg) {

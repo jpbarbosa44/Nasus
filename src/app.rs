@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local, NaiveDate};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::db::{Db, Estatisticas, Sequencia};
+use crate::db::{Db, Estatisticas, Retrospectiva, Sequencia};
 use crate::input::Input;
 use crate::model::{Book, Note, NoteKind, Plano, Status, ler_categorias, separar_pagina};
 use crate::openlibrary::{self, Resultado};
@@ -19,6 +19,7 @@ pub enum Tela {
     Biblioteca,
     Detalhe,
     Estatisticas,
+    Retrospectiva,
     Busca,
     Ajuda,
 }
@@ -251,6 +252,7 @@ pub struct App {
     pub ano: i32,
     pub stats: Option<Estatisticas>,
     pub sequencia: Sequencia,
+    pub retro: Option<Retrospectiva>,
     /// páginas lidas por dia, para o mapa de calor
     pub leitura_dias: Vec<(NaiveDate, i64)>,
 
@@ -297,6 +299,7 @@ impl App {
             ano: hoje().year(),
             stats: None,
             sequencia: Sequencia::default(),
+            retro: None,
             leitura_dias: Vec::new(),
             busca: Input::default(),
             resultados: Vec::new(),
@@ -446,6 +449,7 @@ impl App {
                 Tela::Biblioteca => self.tecla_biblioteca(k),
                 Tela::Detalhe => self.tecla_detalhe(k),
                 Tela::Estatisticas => self.tecla_stats(k),
+                Tela::Retrospectiva => self.tecla_retro(k),
                 Tela::Busca => self.tecla_busca(k),
                 Tela::Ajuda => {
                     if matches!(k.code, KeyCode::Esc | KeyCode::Char('q' | '?')) {
@@ -613,6 +617,21 @@ impl App {
         Ok(())
     }
 
+    fn tecla_retro(&mut self, k: KeyEvent) -> Result<()> {
+        match k.code {
+            KeyCode::Left | KeyCode::Char('h') => self.ano -= 1,
+            KeyCode::Right | KeyCode::Char('l') => self.ano += 1,
+            KeyCode::Char('?') => {
+                self.ir_para(Tela::Ajuda);
+                return Ok(());
+            }
+            KeyCode::Esc | KeyCode::Char('q' | 'r') => return self.abrir_stats(),
+            _ => return Ok(()),
+        }
+        self.retro = Some(self.db.retrospectiva(self.ano)?);
+        Ok(())
+    }
+
     fn tecla_stats(&mut self, k: KeyEvent) -> Result<()> {
         match k.code {
             KeyCode::Left | KeyCode::Char('h') => {
@@ -622,6 +641,10 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => {
                 self.ano += 1;
                 self.abrir_stats()?;
+            }
+            KeyCode::Char('r') => {
+                self.retro = Some(self.db.retrospectiva(self.ano)?);
+                self.tela = Tela::Retrospectiva;
             }
             KeyCode::Char('g') => {
                 let atual = self.stats.as_ref().and_then(|s| s.meta).map(|m| m.to_string()).unwrap_or_default();

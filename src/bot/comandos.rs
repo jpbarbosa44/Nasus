@@ -217,6 +217,10 @@ impl Nucleo {
                 "devolvido" | "devolver" => self.devolver(resto, hoje),
                 "emprestados" => self.emprestados(hoje),
                 "serie" | "série" => self.serie(resto),
+                "retrospectiva" => {
+                    let ano = if resto.is_empty() { hoje.year() } else { resto.parse().context("use /retrospectiva 2025")? };
+                    self.retrospectiva(ano)
+                }
                 _ => bail!("comando desconhecido; mande /ajuda"),
             };
         }
@@ -807,6 +811,10 @@ impl Nucleo {
         Ok(v)
     }
 
+    pub fn retrospectiva(&self, ano: i32) -> Result<Resposta> {
+        Ok(Resposta::texto(self.db.retrospectiva(ano)?.texto()))
+    }
+
     pub fn backup_diario(&self, hoje: NaiveDate) -> Result<()> {
         self.db.backup_diario(hoje).map(|_| ())
     }
@@ -912,6 +920,9 @@ mod tests {
         assert!(r.texto.contains("Próximo da série: #2 O Messias de Duna"), "{}", r.texto);
         assert_eq!(r.botoes[0][0].1, "lendo:2");
         assert!(n.mensagem("/serie #2", dia(7)).texto.contains("fora de séries"));
+        let r = n.mensagem("/retrospectiva", dia(7));
+        assert!(r.texto.contains("🎉 Retrospectiva 2026") && r.texto.contains("1 livro · 680 páginas"), "{}", r.texto);
+        assert!(n.mensagem("/retrospectiva 1990", dia(7)).texto.contains("Nenhum livro"));
     }
 
     #[test]

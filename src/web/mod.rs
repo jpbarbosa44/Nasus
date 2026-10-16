@@ -502,6 +502,30 @@ impl Api {
                     "leitura": self.leitura(366, hoje)?,
                 }))
             }
+            ("GET", "/api/retrospectiva") => {
+                let ano = parametro(query, "ano").and_then(|a| a.parse().ok()).unwrap_or(hoje.year());
+                let r = self.db.retrospectiva(ano)?;
+                let par = |o: &Option<(String, i64)>| o.as_ref().map(|(a, b)| json!([a, b]));
+                Ok(json!({
+                    "ano": r.ano,
+                    "lidos": r.lidos,
+                    "paginas": r.paginas,
+                    "mais_longo": par(&r.mais_longo),
+                    "mais_curto": par(&r.mais_curto),
+                    "mais_rapido": par(&r.mais_rapido),
+                    "autor": par(&r.autor),
+                    "categoria": par(&r.categoria),
+                    "melhor_mes": r.melhor_mes.map(|(m, n)| json!([crate::db::MESES[m as usize - 1], n])),
+                    "nota_media": r.nota_media,
+                    "cinco_estrelas": r.cinco_estrelas,
+                    "notas": r.notas,
+                    "citacoes": r.citacoes,
+                    "citacao": r.citacao.as_ref().map(|(t, l)| json!({ "texto": t, "livro": l })),
+                    "dias_lendo": r.dias_lendo,
+                    "maior_sequencia": r.maior_sequencia,
+                    "texto": r.texto(),
+                }))
+            }
             ("GET", "/api/historico") => {
                 let dias = parametro(query, "dias").and_then(|d| d.parse().ok()).unwrap_or(366u64).clamp(1, 3660);
                 Ok(self.leitura(dias, hoje)?)
@@ -729,6 +753,9 @@ mod tests {
         assert_eq!(v["livro"]["pagina_atual"], 680);
         assert_eq!(v["proximo"]["id"], messias, "{v}");
 
+        let (_, v) = get(&mut a, "/api/retrospectiva", "ano=2026");
+        assert_eq!((v["lidos"].clone(), v["mais_longo"].clone()), (json!(1), json!(["Duna", 680])), "{v}");
+        assert!(v["texto"].as_str().unwrap().starts_with("🎉 Retrospectiva 2026"));
         let (_, v) = get(&mut a, "/api/estatisticas", "ano=2026");
         assert_eq!(v["lidos"], 1);
         assert_eq!(v["por_categoria"][0]["livros"], 1);
